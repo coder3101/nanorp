@@ -5,10 +5,10 @@ async fn main() {
     use leptos::logging::log;
     use leptos::prelude::*;
     use leptos_axum::{generate_route_list, LeptosRoutes};
-    use tower_http::services::ServeDir;
     use nanorp::app::*;
     use nanorp::config;
     use nanorp::db::Db;
+    use tower_http::services::ServeDir;
 
     tracing_subscriber::fmt::init();
 

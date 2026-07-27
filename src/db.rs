@@ -101,9 +101,7 @@ impl Db {
 /// compile time. To change the schema, add a new numbered file there and
 /// include it at the end of this list — never edit an existing script after
 /// release (write ALTER TABLE / backfill statements in the new file instead).
-const MIGRATIONS: &[&str] = &[
-    include_str!("../migrations/001_initial_schema.sql"),
-];
+const MIGRATIONS: &[&str] = &[include_str!("../migrations/001_initial_schema.sql")];
 
 #[cfg(test)]
 mod tests {
@@ -133,7 +131,14 @@ mod tests {
 
         let conn = db.conn();
         let conn = conn.lock().unwrap();
-        for table in ["providers", "characters", "chat_sessions", "messages", "attachments", "settings"] {
+        for table in [
+            "providers",
+            "characters",
+            "chat_sessions",
+            "messages",
+            "attachments",
+            "settings",
+        ] {
             let count: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -144,5 +149,4 @@ mod tests {
             assert_eq!(count, 1, "table {table} should exist");
         }
     }
-
 }

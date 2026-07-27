@@ -1,7 +1,7 @@
+use crate::models::message::{Attachment, EditPayload, ImageUpload, Message, MessageRole};
 use leptos::prelude::*;
 use leptos::wasm_bindgen::JsCast;
 use uuid::Uuid;
-use crate::models::message::{Attachment, EditPayload, ImageUpload, Message, MessageRole};
 
 /// A newly-picked image (during message edit) held in memory before saving.
 #[derive(Clone, PartialEq)]
@@ -28,7 +28,10 @@ fn read_image_file(
 
     let content_type = file.type_();
     if !content_type.starts_with("image/") {
-        toast.warning(format!("\"{}\" isn't an image — only images can be attached", file.name()));
+        toast.warning(format!(
+            "\"{}\" isn't an image — only images can be attached",
+            file.name()
+        ));
         return;
     }
     if file.size() as u64 > MAX_IMAGE_BYTES as u64 {
@@ -71,7 +74,9 @@ fn read_image_file(
 use crate::components::avatar::{gradient as avatar_gradient, initial};
 
 fn format_time(dt: &chrono::DateTime<chrono::Utc>) -> String {
-    dt.with_timezone(&chrono::Local).format("%-I:%M %p").to_string()
+    dt.with_timezone(&chrono::Local)
+        .format("%-I:%M %p")
+        .to_string()
 }
 
 /// The parsed pieces of an assistant message: an optional reasoning ("thinking")
@@ -122,7 +127,8 @@ pub fn MessageBubble(
     #[prop(optional)] is_streaming: Signal<bool>,
     #[prop(optional)] streaming_content: Signal<String>,
     /// Whether to render the model's reasoning block. Defaults to shown.
-    #[prop(optional, into)] render_thinking: MaybeProp<bool>,
+    #[prop(optional, into)]
+    render_thinking: MaybeProp<bool>,
     /// Called with the edit payload when a user message edit is saved.
     on_edit: Option<Callback<EditPayload>>,
     /// Called with the assistant message id to regenerate it.
@@ -336,8 +342,13 @@ pub fn MessageBubble(
             </div>
         }.into_any()
     } else {
-        let char_name = character_name.get().unwrap_or_else(|| "Assistant".to_string());
-        let avatar_url = character_avatar.get().filter(|s| !s.is_empty()).map(|rel| format!("/{rel}"));
+        let char_name = character_name
+            .get()
+            .unwrap_or_else(|| "Assistant".to_string());
+        let avatar_url = character_avatar
+            .get()
+            .filter(|s| !s.is_empty())
+            .map(|rel| format!("/{rel}"));
         let gradient = avatar_gradient(&char_name);
         let av_initial = initial(&char_name);
 
@@ -398,27 +409,35 @@ pub fn MessageBubble(
                                     class="prose max-w-none break-words text-[13px] sm:text-sm"
                                     inner_html=move || crate::markdown::render_markdown(&parsed.get().2)
                                 ></div>
+
+                                // Streaming feedback. A caret trails the answer
+                                // once there is one; before that, dots — labelled
+                                // "Thinking" while the model is reasoning, since
+                                // hidden reasoning would otherwise leave the
+                                // bubble looking stalled.
+                                {move || {
+                                    if !is_streaming.get() {
+                                        return None;
+                                    }
+                                    let (reasoning, reasoning_open, answer) = parsed.get();
+                                    if !answer.is_empty() {
+                                        return Some(view! {
+                                            <span class="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-foreground align-middle" />
+                                        }.into_any());
+                                    }
+                                    // The reasoning panel is visible and already
+                                    // conveys progress; don't double up.
+                                    if reasoning.is_some() && show_thinking.get() {
+                                        return None;
+                                    }
+                                    Some(if reasoning_open {
+                                        view! { <StreamingDots label="Thinking" /> }.into_any()
+                                    } else {
+                                        view! { <StreamingDots /> }.into_any()
+                                    })
+                                }}
                             }
                         }
-
-                        // Thinking dots (before any token) / streaming cursor.
-                        {move || {
-                            if is_streaming.get() && streaming_content.get().is_empty() {
-                                Some(view! {
-                                    <div class="flex items-center gap-1 py-1">
-                                        <div class="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
-                                        <div class="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
-                                        <div class="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
-                                    </div>
-                                }.into_any())
-                            } else if is_streaming.get() {
-                                Some(view! {
-                                    <span class="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-foreground align-middle" />
-                                }.into_any())
-                            } else {
-                                None
-                            }
-                        }}
                     </div>
 
                     // Meta row: actions + model badge + timestamp (on hover, not streaming).
@@ -516,6 +535,29 @@ fn CopyButton(text: String) -> impl IntoView {
     }
 }
 
+/// Bouncing dots shown while a reply is streaming but nothing readable has
+/// arrived yet. `label` names what the model is doing when we know it — a
+/// hidden reasoning block otherwise looks like a stalled response.
+#[component]
+fn StreamingDots(#[prop(optional)] label: Option<&'static str>) -> impl IntoView {
+    view! {
+        <div
+            class="flex items-center gap-2 py-1"
+            role="status"
+            aria-label=label.unwrap_or("Generating response")
+        >
+            {label.map(|l| view! {
+                <span class="text-xs italic text-muted-foreground">{l}</span>
+            })}
+            <div class="flex items-center gap-1">
+                <div class="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
+                <div class="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
+                <div class="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
+            </div>
+        </div>
+    }
+}
+
 /// Collapsible "thinking" / reasoning panel for reasoning models. Auto-expanded
 /// while streaming, collapsed by default once the answer is available.
 #[component]
@@ -558,10 +600,7 @@ fn ThinkingBlock(
 }
 
 #[component]
-fn ImageGrid(
-    attachments: Vec<Attachment>,
-    is_user: bool,
-) -> impl IntoView {
+fn ImageGrid(attachments: Vec<Attachment>, is_user: bool) -> impl IntoView {
     if attachments.is_empty() {
         return None;
     }
@@ -622,10 +661,7 @@ fn ImageGrid(
 
 /// Fullscreen image overlay. Closes on click or Escape.
 #[component]
-fn Lightbox(
-    #[prop(into)] src: Signal<String>,
-    on_close: Callback<()>,
-) -> impl IntoView {
+fn Lightbox(#[prop(into)] src: Signal<String>, on_close: Callback<()>) -> impl IntoView {
     use leptos::callback::Callable;
 
     let handle = leptos::leptos_dom::helpers::window_event_listener(

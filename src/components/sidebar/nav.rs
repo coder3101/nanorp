@@ -1,12 +1,10 @@
-use leptos::prelude::*;
 use leptos::callback::Callable;
+use leptos::prelude::*;
 use leptos_router::components::A;
 use leptos_router::hooks::use_location;
 
 #[component]
-pub fn Nav(
-    #[prop(optional)] on_navigate: Option<Callback<()>>,
-) -> impl IntoView {
+pub fn Nav(#[prop(optional)] on_navigate: Option<Callback<()>>) -> impl IntoView {
     let location = use_location();
 
     let on_click = move |_| {

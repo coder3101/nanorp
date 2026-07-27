@@ -1,13 +1,13 @@
-use leptos::prelude::*;
-use leptos::callback::Callable;
-use leptos::wasm_bindgen::JsCast;
-use leptos_router::components::A;
-use uuid::Uuid;
-use crate::components::sidebar::nav::Nav;
 use crate::components::sidebar::chat_list::ChatList;
+use crate::components::sidebar::nav::Nav;
 use crate::components::ui::toast::use_toast;
 use crate::models::chat::ChatSummary;
 use crate::server::chat::{delete_chat_session, list_chat_sessions};
+use leptos::callback::Callable;
+use leptos::prelude::*;
+use leptos::wasm_bindgen::JsCast;
+use leptos_router::components::A;
+use uuid::Uuid;
 
 #[component]
 pub fn Sidebar(
@@ -24,7 +24,11 @@ pub fn Sidebar(
     let sessions = LocalResource::new(move || {
         let _ = current_session_id.get();
         let _ = refetch.get();
-        async move { list_chat_sessions(None, 100, 0).await.map_err(|e| e.to_string()) }
+        async move {
+            list_chat_sessions(None, 100, 0)
+                .await
+                .map_err(|e| e.to_string())
+        }
     });
     let load_error = Signal::derive(move || sessions.get().and_then(|r| r.err()));
     let all_chats = Signal::derive(move || {
@@ -42,8 +46,12 @@ pub fn Sidebar(
         list.into_iter()
             .filter(|c| {
                 c.character_name.to_lowercase().contains(&q)
-                    || c.title.as_deref().is_some_and(|t| t.to_lowercase().contains(&q))
-                    || c.last_message.as_deref().is_some_and(|m| m.to_lowercase().contains(&q))
+                    || c.title
+                        .as_deref()
+                        .is_some_and(|t| t.to_lowercase().contains(&q))
+                    || c.last_message
+                        .as_deref()
+                        .is_some_and(|m| m.to_lowercase().contains(&q))
             })
             .collect()
     });

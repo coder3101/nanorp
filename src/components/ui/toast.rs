@@ -36,10 +36,22 @@ pub struct ToastContext {
 }
 
 impl ToastContext {
-    fn add(&self, title: String, description: Option<String>, variant: ToastVariant, duration_ms: u64) -> u64 {
+    fn add(
+        &self,
+        title: String,
+        description: Option<String>,
+        variant: ToastVariant,
+        duration_ms: u64,
+    ) -> u64 {
         let id = self.next_id.with(|n| *n);
         self.next_id.update(|n| *n += 1);
-        let toast = ToastData { id, title, description, variant, duration_ms };
+        let toast = ToastData {
+            id,
+            title,
+            description,
+            variant,
+            duration_ms,
+        };
         self.toasts.update(|t| t.push(toast));
         id
     }
@@ -71,8 +83,15 @@ impl UseToast {
         self.show(title, ToastVariant::Warning);
     }
 
-    pub fn custom(&self, title: impl Into<String>, description: Option<String>, variant: ToastVariant, duration_ms: u64) -> u64 {
-        self.ctx.add(title.into(), description, variant, duration_ms)
+    pub fn custom(
+        &self,
+        title: impl Into<String>,
+        description: Option<String>,
+        variant: ToastVariant,
+        duration_ms: u64,
+    ) -> u64 {
+        self.ctx
+            .add(title.into(), description, variant, duration_ms)
     }
 
     pub fn dismiss(&self, id: u64) {

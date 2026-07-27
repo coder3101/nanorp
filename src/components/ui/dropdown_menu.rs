@@ -1,9 +1,9 @@
 //! Dropdown menu with pointer + keyboard support (arrows, Home/End, Escape)
 //! and menu ARIA roles.
 
-use leptos::prelude::*;
-use leptos::html;
 use leptos::callback::Callable;
+use leptos::html;
+use leptos::prelude::*;
 use leptos::wasm_bindgen::JsCast;
 
 #[derive(Clone)]
@@ -31,10 +31,7 @@ impl DropdownAlign {
 }
 
 #[component]
-pub fn DropdownMenu(
-    #[prop(optional)] open: RwSignal<bool>,
-    children: Children,
-) -> impl IntoView {
+pub fn DropdownMenu(#[prop(optional)] open: RwSignal<bool>, children: Children) -> impl IntoView {
     provide_context(DropdownMenuContext {
         open,
         trigger_ref: NodeRef::new(),
@@ -105,7 +102,9 @@ pub fn DropdownMenuContent(
         move |e: leptos::web_sys::MouseEvent| {
             // Guard against firing after the component (and its signals) have
             // been disposed — `try_get_untracked` returns None post-dispose.
-            let Some(is_open) = open.try_get_untracked() else { return };
+            let Some(is_open) = open.try_get_untracked() else {
+                return;
+            };
             if !is_open {
                 return;
             }
@@ -125,7 +124,9 @@ pub fn DropdownMenuContent(
     let keydown_handle = leptos::leptos_dom::helpers::window_event_listener(
         leptos::ev::keydown,
         move |e: leptos::web_sys::KeyboardEvent| {
-            let Some(is_open) = open.try_get_untracked() else { return };
+            let Some(is_open) = open.try_get_untracked() else {
+                return;
+            };
             if is_open && e.key() == "Escape" {
                 open.set(false);
                 if let Some(btn) = trigger_ref.get_untracked() {
@@ -213,7 +214,10 @@ fn focus_menu_item(menu: &leptos::web_sys::HtmlElement, step: ItemFocus) {
     };
     let mut items: Vec<leptos::web_sys::HtmlElement> = Vec::new();
     for i in 0..nodes.length() {
-        if let Some(el) = nodes.item(i).and_then(|n| n.dyn_into::<leptos::web_sys::HtmlElement>().ok()) {
+        if let Some(el) = nodes
+            .item(i)
+            .and_then(|n| n.dyn_into::<leptos::web_sys::HtmlElement>().ok())
+        {
             items.push(el);
         }
     }

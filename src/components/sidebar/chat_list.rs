@@ -1,9 +1,9 @@
-use leptos::prelude::*;
+use crate::components::ui::scroll_area::ScrollArea;
+use crate::models::chat::ChatSummary;
 use leptos::callback::Callable;
+use leptos::prelude::*;
 use leptos_router::components::A;
 use uuid::Uuid;
-use crate::models::chat::ChatSummary;
-use crate::components::ui::scroll_area::ScrollArea;
 
 fn format_relative_time(dt: &chrono::DateTime<chrono::Utc>) -> String {
     let duration = chrono::Utc::now() - *dt;
@@ -29,12 +29,15 @@ fn format_relative_time(dt: &chrono::DateTime<chrono::Utc>) -> String {
 pub fn ChatList(
     #[prop(optional)] current_session_id: Signal<Option<Uuid>>,
     /// Called when a chat is selected (e.g. to close the mobile sidebar).
-    #[prop(optional)] on_select: Option<Callback<()>>,
+    #[prop(optional)]
+    on_select: Option<Callback<()>>,
     /// Called with the session id when the user confirms deletion.
-    #[prop(optional)] on_delete: Option<Callback<Uuid>>,
+    #[prop(optional)]
+    on_delete: Option<Callback<Uuid>>,
     #[prop(into)] chats: Signal<Vec<ChatSummary>>,
     /// Message shown when the list is empty.
-    #[prop(optional, into)] empty_text: MaybeProp<String>,
+    #[prop(optional, into)]
+    empty_text: MaybeProp<String>,
 ) -> impl IntoView {
     view! {
         <ScrollArea class="flex-1 h-full">
@@ -73,7 +76,10 @@ fn ChatRow(
     let is_active = Signal::derive(move || current_session_id.get() == Some(session_id));
     let time_str = format_relative_time(&chat.updated_at);
     let initial = crate::components::avatar::initial(&chat.character_name);
-    let avatar_url = chat.character_avatar_path.clone().map(|rel| format!("/{rel}"));
+    let avatar_url = chat
+        .character_avatar_path
+        .clone()
+        .map(|rel| format!("/{rel}"));
     // Prefer the session title (auto-generated or user-set); fall back to the
     // character's name.
     let title = chat

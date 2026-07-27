@@ -163,10 +163,14 @@ impl LlmProvider for OpenAiProvider {
             return Ok(Vec::new());
         }
         if !resp.status().is_success() {
-            return Err(anyhow!("Provider returned {} for /v1/models", resp.status()));
+            return Err(anyhow!(
+                "Provider returned {} for /v1/models",
+                resp.status()
+            ));
         }
 
-        let parsed: OpenAiModelsResponse = resp.json().await.context("parse /v1/models response")?;
+        let parsed: OpenAiModelsResponse =
+            resp.json().await.context("parse /v1/models response")?;
         let mut models: Vec<ModelInfo> = parsed
             .data
             .into_iter()

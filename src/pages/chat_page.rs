@@ -1,19 +1,19 @@
-use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
-use uuid::Uuid;
-use crate::models::message::{Message, ImageUpload, MessageRole};
-use crate::models::character::Character;
 use crate::components::chat::chat_header::ChatHeader;
-use crate::components::chat::message_list::MessageList;
 use crate::components::chat::chat_input::ChatInput;
+use crate::components::chat::message_list::MessageList;
 use crate::components::layout::CurrentSession;
 use crate::components::ui::toast::use_toast;
+use crate::models::character::Character;
+use crate::models::message::{ImageUpload, Message, MessageRole};
+use crate::server::character::get_character;
 use crate::server::chat::{
     edit_user_message, get_chat_messages, get_chat_session, stop_generation as request_stop,
     stream_chat_reply, stream_regenerate,
 };
-use crate::server::character::get_character;
 use crate::server::settings::get_settings;
+use leptos::prelude::*;
+use leptos_router::hooks::use_params_map;
+use uuid::Uuid;
 
 /// Data loaded for a chat session.
 #[derive(Clone)]
@@ -31,7 +31,10 @@ async fn load_session(id: Uuid) -> Result<SessionData, String> {
         .await
         .map_err(|e| e.to_string())?;
     let messages = get_chat_messages(id).await.map_err(|e| e.to_string())?;
-    Ok(SessionData { character, messages })
+    Ok(SessionData {
+        character,
+        messages,
+    })
 }
 
 #[component]
@@ -102,7 +105,13 @@ pub fn ChatPage() -> impl IntoView {
     // Consume a TextStream future: show a live placeholder, append tokens, then
     // reload the authoritative message list from the server.
     let toast_for_stream = toast.clone();
-    let consume_stream = move |fut: std::pin::Pin<Box<dyn std::future::Future<Output = Result<leptos::server_fn::codec::TextStream, ServerFnError>>>>| {
+    let consume_stream = move |fut: std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                Output = Result<leptos::server_fn::codec::TextStream, ServerFnError>,
+            >,
+        >,
+    >| {
         is_streaming.set(true);
         streaming_content.set(String::new());
         streaming_msg_id.set(Some(Uuid::new_v4()));
@@ -151,18 +160,22 @@ pub fn ChatPage() -> impl IntoView {
         };
 
         // Optimistically show the user's message.
-        messages.update(|m| m.push(Message {
-            id: Uuid::new_v4(),
-            session_id: sid,
-            role: MessageRole::User,
-            content: content.clone(),
-            attachments: Vec::new(),
-            model_used: None,
-            provider_id: None,
-            created_at: chrono::Utc::now(),
-        }));
+        messages.update(|m| {
+            m.push(Message {
+                id: Uuid::new_v4(),
+                session_id: sid,
+                role: MessageRole::User,
+                content: content.clone(),
+                attachments: Vec::new(),
+                model_used: None,
+                provider_id: None,
+                created_at: chrono::Utc::now(),
+            })
+        });
 
-        consume_send(Box::pin(stream_chat_reply(sid, content, images, pid, model)));
+        consume_send(Box::pin(stream_chat_reply(
+            sid, content, images, pid, model,
+        )));
     });
 
     // Regenerate the last assistant reply.
@@ -180,7 +193,11 @@ pub fn ChatPage() -> impl IntoView {
         };
         // Optimistically drop the trailing assistant message from the view.
         messages.update(|m| {
-            while m.last().map(|x| x.role == MessageRole::Assistant).unwrap_or(false) {
+            while m
+                .last()
+                .map(|x| x.role == MessageRole::Assistant)
+                .unwrap_or(false)
+            {
                 m.pop();
             }
         });
@@ -223,7 +240,9 @@ pub fn ChatPage() -> impl IntoView {
     });
 
     let stop_generation = Callback::new(move |_: ()| {
-        let Some(sid) = session_id.get_untracked() else { return };
+        let Some(sid) = session_id.get_untracked() else {
+            return;
+        };
         leptos::task::spawn_local(async move {
             // Ask the server to abort the provider request. On success the
             // stream ends on its own: the consume loop finishes, the partial

@@ -1,11 +1,11 @@
-use leptos::prelude::*;
-use uuid::Uuid;
 use crate::components::ui::dropdown_menu::{
-    DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
-    DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel,
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
+    DropdownMenuTrigger,
 };
 use crate::models::provider::{ModelInfo, Provider};
 use crate::server::provider::{list_provider_models, list_providers};
+use leptos::prelude::*;
+use uuid::Uuid;
 
 /// A provider paired with the result of fetching its models.
 type ProviderModels = (Provider, Result<Vec<ModelInfo>, String>);
@@ -28,7 +28,8 @@ pub fn ModelSelector(
     selected_provider: RwSignal<Option<Uuid>>,
     selected_model: RwSignal<Option<String>>,
     /// Optional preferred model id from settings (used for the default pick).
-    #[prop(optional, into)] preferred_model: MaybeProp<String>,
+    #[prop(optional, into)]
+    preferred_model: MaybeProp<String>,
 ) -> impl IntoView {
     // Client-only resource — result isn't serializable and only matters after
     // hydration, so `LocalResource` is the right fit.
@@ -72,7 +73,9 @@ pub fn ModelSelector(
     });
 
     let display_text = move || {
-        selected_model.get().unwrap_or_else(|| "Select model".to_string())
+        selected_model
+            .get()
+            .unwrap_or_else(|| "Select model".to_string())
     };
 
     let content = move || {
@@ -80,24 +83,33 @@ pub fn ModelSelector(
         let mut items: Vec<AnyView> = Vec::new();
 
         if list.is_empty() {
-            items.push(view! {
-                <DropdownMenuLabel>"No providers configured"</DropdownMenuLabel>
-            }.into_any());
-            items.push(view! {
-                <DropdownMenuItem>
-                    <leptos_router::components::A href="/settings" attr:class="no-underline">
-                        "Go to settings"
-                    </leptos_router::components::A>
-                </DropdownMenuItem>
-            }.into_any());
+            items.push(
+                view! {
+                    <DropdownMenuLabel>"No providers configured"</DropdownMenuLabel>
+                }
+                .into_any(),
+            );
+            items.push(
+                view! {
+                    <DropdownMenuItem>
+                        <leptos_router::components::A href="/settings" attr:class="no-underline">
+                            "Go to settings"
+                        </leptos_router::components::A>
+                    </DropdownMenuItem>
+                }
+                .into_any(),
+            );
             return items;
         }
 
         for (provider, models) in list.into_iter() {
             let provider_id = provider.id;
-            items.push(view! {
-                <DropdownMenuLabel>{provider.name.clone()}</DropdownMenuLabel>
-            }.into_any());
+            items.push(
+                view! {
+                    <DropdownMenuLabel>{provider.name.clone()}</DropdownMenuLabel>
+                }
+                .into_any(),
+            );
 
             match models {
                 Ok(models) if models.is_empty() => {
@@ -146,11 +158,14 @@ pub fn ModelSelector(
                     }
                 }
                 Err(e) => {
-                    items.push(view! {
-                        <div class="px-2 py-1.5 text-xs text-destructive">
-                            "⚠ " {e}
-                        </div>
-                    }.into_any());
+                    items.push(
+                        view! {
+                            <div class="px-2 py-1.5 text-xs text-destructive">
+                                "⚠ " {e}
+                            </div>
+                        }
+                        .into_any(),
+                    );
                 }
             }
 

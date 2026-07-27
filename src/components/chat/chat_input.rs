@@ -1,10 +1,10 @@
-use leptos::prelude::*;
-use leptos::html;
-use leptos::callback::Callable;
-use leptos::wasm_bindgen::JsCast;
-use uuid::Uuid;
 use crate::components::ui::toast::use_toast;
 use crate::models::message::ImageUpload;
+use leptos::callback::Callable;
+use leptos::html;
+use leptos::prelude::*;
+use leptos::wasm_bindgen::JsCast;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 struct PendingImage {
@@ -90,11 +90,15 @@ pub fn ChatInput(
             return;
         }
         let text = message.get();
-        let imgs: Vec<ImageUpload> = pending_images.get().into_iter().map(|pi| ImageUpload {
-            data: pi.data,
-            content_type: pi.content_type,
-            original_name: pi.original_name,
-        }).collect();
+        let imgs: Vec<ImageUpload> = pending_images
+            .get()
+            .into_iter()
+            .map(|pi| ImageUpload {
+                data: pi.data,
+                content_type: pi.content_type,
+                original_name: pi.original_name,
+            })
+            .collect();
         on_send.run((text, imgs));
         message.set(String::new());
         pending_images.set(Vec::new());
@@ -252,7 +256,10 @@ fn process_file(
 ) {
     let content_type = file.type_();
     if !content_type.starts_with("image/") {
-        toast.warning(format!("\"{}\" isn't an image — only images can be attached", file.name()));
+        toast.warning(format!(
+            "\"{}\" isn't an image — only images can be attached",
+            file.name()
+        ));
         return;
     }
 
@@ -276,24 +283,25 @@ fn process_file(
     let reader = leptos::web_sys::FileReader::new().unwrap();
     let reader_clone = reader.clone();
 
-    let onload = leptos::wasm_bindgen::prelude::Closure::wrap(Box::new(move |_: leptos::web_sys::Event| {
-        let result = reader_clone.result().unwrap();
-        let data_url = result.as_string().unwrap();
-        let base64 = data_url.split(',').nth(1).unwrap_or("").to_string();
-        pending.update(|imgs| {
-            // Re-checked here because reads complete asynchronously, so a
-            // multi-file selection could otherwise overshoot the cap.
-            if imgs.len() < MAX_IMAGES_PER_MESSAGE {
-                imgs.push(PendingImage {
-                    id: Uuid::new_v4(),
-                    data: base64,
-                    content_type: content_type.clone(),
-                    original_name: Some(name.clone()),
-                    file_size: size,
-                });
-            }
-        });
-    }) as Box<dyn FnMut(_)>);
+    let onload =
+        leptos::wasm_bindgen::prelude::Closure::wrap(Box::new(move |_: leptos::web_sys::Event| {
+            let result = reader_clone.result().unwrap();
+            let data_url = result.as_string().unwrap();
+            let base64 = data_url.split(',').nth(1).unwrap_or("").to_string();
+            pending.update(|imgs| {
+                // Re-checked here because reads complete asynchronously, so a
+                // multi-file selection could otherwise overshoot the cap.
+                if imgs.len() < MAX_IMAGES_PER_MESSAGE {
+                    imgs.push(PendingImage {
+                        id: Uuid::new_v4(),
+                        data: base64,
+                        content_type: content_type.clone(),
+                        original_name: Some(name.clone()),
+                        file_size: size,
+                    });
+                }
+            });
+        }) as Box<dyn FnMut(_)>);
 
     reader.set_onload(Some(onload.as_ref().unchecked_ref()));
     onload.forget();

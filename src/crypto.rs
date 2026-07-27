@@ -57,8 +57,8 @@ fn load_or_create_key() -> Result<[u8; KEY_LEN]> {
     let path = config::config_dir()?.join(KEY_FILENAME);
 
     if path.exists() {
-        let bytes = std::fs::read(&path)
-            .with_context(|| format!("read key file {}", path.display()))?;
+        let bytes =
+            std::fs::read(&path).with_context(|| format!("read key file {}", path.display()))?;
         let arr: [u8; KEY_LEN] = bytes.as_slice().try_into().map_err(|_| {
             anyhow::anyhow!(
                 "key file {} is corrupt (expected {KEY_LEN} bytes, found {})",
@@ -127,7 +127,10 @@ mod tests {
         let stored = encrypt_with_key("sk-super-secret", &TEST_KEY).unwrap();
         assert!(is_encrypted(&stored));
         assert!(!stored.contains("sk-super-secret"));
-        assert_eq!(decrypt_with_key(&stored, &TEST_KEY).unwrap(), "sk-super-secret");
+        assert_eq!(
+            decrypt_with_key(&stored, &TEST_KEY).unwrap(),
+            "sk-super-secret"
+        );
     }
 
     #[test]

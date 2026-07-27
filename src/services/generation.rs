@@ -30,7 +30,13 @@ pub fn begin(session_id: Uuid) -> (Uuid, watch::Receiver<bool>) {
     let generation_id = Uuid::new_v4();
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let mut map = active().lock().expect("generation registry poisoned");
-    if let Some(old) = map.insert(session_id, Entry { generation_id, cancel_tx }) {
+    if let Some(old) = map.insert(
+        session_id,
+        Entry {
+            generation_id,
+            cancel_tx,
+        },
+    ) {
         let _ = old.cancel_tx.send(true);
     }
     (generation_id, cancel_rx)
@@ -55,7 +61,10 @@ pub struct FinishGuard {
 
 impl FinishGuard {
     pub fn new(session_id: Uuid, generation_id: Uuid) -> Self {
-        Self { session_id, generation_id }
+        Self {
+            session_id,
+            generation_id,
+        }
     }
 }
 

@@ -1,8 +1,3 @@
-use leptos::prelude::*;
-use leptos::html;
-use leptos::callback::Callable;
-use leptos::wasm_bindgen::JsCast;
-use uuid::Uuid;
 use crate::components::avatar::{gradient as avatar_gradient, initial};
 use crate::components::ui::classes::{BTN_DESTRUCTIVE, BTN_OUTLINE, BTN_PRIMARY, INPUT};
 use crate::components::ui::confirm::confirm;
@@ -15,9 +10,14 @@ use crate::components::ui::modal::Modal;
 use crate::components::ui::toast::{use_toast, ToastVariant};
 use crate::models::character::{Character, NewCharacter, UpdateCharacter};
 use crate::server::character::{
-    create_character, delete_character, list_characters, remove_character_avatar,
-    update_character, upload_character_avatar,
+    create_character, delete_character, list_characters, remove_character_avatar, update_character,
+    upload_character_avatar,
 };
+use leptos::callback::Callable;
+use leptos::html;
+use leptos::prelude::*;
+use leptos::wasm_bindgen::JsCast;
+use uuid::Uuid;
 
 /// A pending avatar chosen in the dialog before it's uploaded.
 #[derive(Clone, PartialEq)]
@@ -51,7 +51,12 @@ pub fn CharactersPage() -> impl IntoView {
 
     let is_editing = Signal::derive(move || editing_character.get().is_some());
     let dialog_title = Signal::derive(move || {
-        if is_editing.get() { "Edit Character" } else { "New Character" }.to_string()
+        if is_editing.get() {
+            "Edit Character"
+        } else {
+            "New Character"
+        }
+        .to_string()
     });
     let dialog_subtitle = Signal::derive(move || {
         if is_editing.get() {
@@ -75,7 +80,13 @@ pub fn CharactersPage() -> impl IntoView {
     let existing_avatar = RwSignal::new(Option::<String>::None);
     let avatar_cleared = RwSignal::new(false);
     // Snapshot of the form as opened, for the unsaved-changes guard.
-    let form_snapshot = StoredValue::new((String::new(), String::new(), String::new(), String::new(), String::new()));
+    let form_snapshot = StoredValue::new((
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+    ));
 
     let open_create = Callback::new(move |_| {
         editing_character.set(None);
@@ -100,7 +111,11 @@ pub fn CharactersPage() -> impl IntoView {
         let system_prompt = char.system_prompt.unwrap_or_default();
         let greeting = char.greeting.unwrap_or_default();
         form_snapshot.set_value((
-            name.clone(), role.clone(), personality.clone(), system_prompt.clone(), greeting.clone(),
+            name.clone(),
+            role.clone(),
+            personality.clone(),
+            system_prompt.clone(),
+            greeting.clone(),
         ));
         form_name.set(name);
         form_role.set(role);
@@ -139,7 +154,9 @@ pub fn CharactersPage() -> impl IntoView {
 
     let toast_delete = toast.clone();
     let do_delete = Callback::new(move |_| {
-        let Some(char) = deleting_character.get() else { return };
+        let Some(char) = deleting_character.get() else {
+            return;
+        };
         let toast_inner = toast_delete.clone();
         leptos::task::spawn_local(async move {
             match delete_character(char.id).await {
@@ -184,7 +201,8 @@ pub fn CharactersPage() -> impl IntoView {
                     name: form_name.get_untracked(),
                     role: Some(form_role.get_untracked()).filter(|s| !s.is_empty()),
                     personality: Some(form_personality.get_untracked()).filter(|s| !s.is_empty()),
-                    system_prompt: Some(form_system_prompt.get_untracked()).filter(|s| !s.is_empty()),
+                    system_prompt: Some(form_system_prompt.get_untracked())
+                        .filter(|s| !s.is_empty()),
                     greeting: Some(form_greeting.get_untracked()).filter(|s| !s.is_empty()),
                 })
                 .await
@@ -201,17 +219,32 @@ pub fn CharactersPage() -> impl IntoView {
 
             // 2. Apply avatar changes.
             if let Some(p) = pending {
-                if let Err(e) = upload_character_avatar(character.id, p.data, p.content_type).await {
-                    toast_inner.custom("Avatar upload failed", Some(e.to_string()), ToastVariant::Warning, 4000);
+                if let Err(e) = upload_character_avatar(character.id, p.data, p.content_type).await
+                {
+                    toast_inner.custom(
+                        "Avatar upload failed",
+                        Some(e.to_string()),
+                        ToastVariant::Warning,
+                        4000,
+                    );
                 }
             } else if cleared {
                 if let Err(e) = remove_character_avatar(character.id).await {
-                    toast_inner.custom("Couldn't remove avatar", Some(e.to_string()), ToastVariant::Warning, 4000);
+                    toast_inner.custom(
+                        "Couldn't remove avatar",
+                        Some(e.to_string()),
+                        ToastVariant::Warning,
+                        4000,
+                    );
                 }
             }
 
             saving.set(false);
-            toast_inner.success(if is_editing.get_untracked() { "Character updated" } else { "Character created" });
+            toast_inner.success(if is_editing.get_untracked() {
+                "Character updated"
+            } else {
+                "Character created"
+            });
             dialog_open.set(false);
             editing_character.set(None);
             version.update(|v| *v += 1);
@@ -225,10 +258,7 @@ pub fn CharactersPage() -> impl IntoView {
             match crate::server::chat::create_chat_session(character_id).await {
                 Ok(session) => {
                     let navigate = leptos_router::hooks::use_navigate();
-                    navigate(
-                        format!("/chat/{}", session.id).as_str(),
-                        Default::default(),
-                    );
+                    navigate(format!("/chat/{}", session.id).as_str(), Default::default());
                 }
                 Err(e) => toast_inner.error(format!("Couldn't start chat: {e}")),
             }
@@ -285,7 +315,10 @@ pub fn CharactersPage() -> impl IntoView {
     let handle_import = move |_ev: leptos::web_sys::Event| {
         #[cfg(feature = "hydrate")]
         {
-            let input = _ev.target().unwrap().unchecked_into::<web_sys::HtmlInputElement>();
+            let input = _ev
+                .target()
+                .unwrap()
+                .unchecked_into::<web_sys::HtmlInputElement>();
             if let Some(file) = input.files().and_then(|f| f.get(0)) {
                 import_character_file(file, toast_import.clone(), version);
             }
@@ -300,7 +333,10 @@ pub fn CharactersPage() -> impl IntoView {
     let pick_avatar = move |_ev: leptos::web_sys::Event| {
         #[cfg(feature = "hydrate")]
         {
-            let input = _ev.target().unwrap().unchecked_into::<web_sys::HtmlInputElement>();
+            let input = _ev
+                .target()
+                .unwrap()
+                .unchecked_into::<web_sys::HtmlInputElement>();
             if let Some(files) = input.files() {
                 if let Some(file) = files.get(0) {
                     read_avatar_file(file, pending_avatar, avatar_cleared, &toast_avatar);
@@ -680,8 +716,12 @@ fn import_character_file(
     let reader_clone = reader.clone();
 
     let onload = Closure::wrap(Box::new(move |_: web_sys::Event| {
-        let Ok(result) = reader_clone.result() else { return };
-        let Some(text) = result.as_string() else { return };
+        let Ok(result) = reader_clone.result() else {
+            return;
+        };
+        let Some(text) = result.as_string() else {
+            return;
+        };
         let toast = toast.clone();
         match serde_json::from_str::<NewCharacter>(&text) {
             Ok(nc) if !nc.name.trim().is_empty() => {
@@ -710,10 +750,17 @@ fn import_character_file(
 fn download_json(filename: &str, contents: &str) {
     use leptos::wasm_bindgen::JsCast;
 
-    let Some(doc) = leptos::web_sys::window().and_then(|w| w.document()) else { return };
-    let Ok(anchor) = doc.create_element("a") else { return };
+    let Some(doc) = leptos::web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let Ok(anchor) = doc.create_element("a") else {
+        return;
+    };
     let encoded = String::from(js_sys::encode_uri_component(contents));
-    let _ = anchor.set_attribute("href", &format!("data:application/json;charset=utf-8,{encoded}"));
+    let _ = anchor.set_attribute(
+        "href",
+        &format!("data:application/json;charset=utf-8,{encoded}"),
+    );
     let _ = anchor.set_attribute("download", filename);
     if let Some(el) = anchor.dyn_ref::<leptos::web_sys::HtmlElement>() {
         el.click();
@@ -846,10 +893,7 @@ fn CharacterCard(
 }
 
 #[component]
-fn CharactersEmpty(
-    on_create: Callback<()>,
-    on_import: Callback<()>,
-) -> impl IntoView {
+fn CharactersEmpty(on_create: Callback<()>, on_import: Callback<()>) -> impl IntoView {
     view! {
         <div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-20 text-center">
             <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-lg">

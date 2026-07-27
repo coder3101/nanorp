@@ -1,7 +1,7 @@
-use leptos::prelude::*;
-use leptos_router::components::Outlet;
 use crate::components::sidebar::sidebar::Sidebar;
 use crate::components::ui::sheet::{Sheet, SheetSide};
+use leptos::prelude::*;
+use leptos_router::components::Outlet;
 
 #[derive(Clone)]
 pub struct SidebarState {

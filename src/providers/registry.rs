@@ -27,9 +27,7 @@ fn shared_client() -> reqwest::Client {
 pub fn build_provider(provider: &Provider) -> Arc<dyn LlmProvider> {
     let client = shared_client();
     match provider.provider_type {
-        ProviderType::Ollama => {
-            Arc::new(OllamaProvider::new(client, provider.api_url.clone()))
-        }
+        ProviderType::Ollama => Arc::new(OllamaProvider::new(client, provider.api_url.clone())),
         ProviderType::OpenAiCompatible => Arc::new(OpenAiProvider::new(
             client,
             provider.api_url.clone(),

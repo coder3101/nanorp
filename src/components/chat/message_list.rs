@@ -1,9 +1,9 @@
-use leptos::prelude::*;
-use leptos::html;
-use uuid::Uuid;
-use crate::models::message::Message;
-use crate::components::ui::scroll_area::ScrollArea;
 use crate::components::chat::message_bubble::MessageBubble;
+use crate::components::ui::scroll_area::ScrollArea;
+use crate::models::message::Message;
+use leptos::html;
+use leptos::prelude::*;
+use uuid::Uuid;
 
 #[component]
 pub fn MessageList(
@@ -22,7 +22,9 @@ pub fn MessageList(
 
     let on_scroll = Callback::new(move |_: ()| {
         if let Some(el) = scroll_ref.get_untracked() {
-            let at_bottom = (el.scroll_height() as f64 - el.scroll_top() as f64 - el.client_height() as f64) < threshold;
+            let at_bottom =
+                (el.scroll_height() as f64 - el.scroll_top() as f64 - el.client_height() as f64)
+                    < threshold;
             is_at_bottom.set(at_bottom);
         }
     });

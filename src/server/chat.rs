@@ -16,8 +16,7 @@ pub async fn create_chat_session(character_id: Uuid) -> Result<ChatSession, Serv
     use crate::services::character_service::CharacterService;
     use crate::services::chat_service::ChatService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || {
         let character = CharacterService::new(db.clone())
@@ -41,8 +40,7 @@ pub async fn get_chat_session(id: Uuid) -> Result<Option<ChatSession>, ServerFnE
     use crate::db::Db;
     use crate::services::chat_service::ChatService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || ChatService::new(db).get_session(id))
         .await
@@ -59,13 +57,14 @@ pub async fn list_chat_sessions(
     use crate::db::Db;
     use crate::services::chat_service::ChatService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
-    tokio::task::spawn_blocking(move || ChatService::new(db).list_sessions(character_id, limit, offset))
-        .await
-        .map_err(|e| ServerFnError::new(format!("Task failed: {e}")))?
-        .map_err(|e| ServerFnError::new(format!("Failed to list sessions: {e}")))
+    tokio::task::spawn_blocking(move || {
+        ChatService::new(db).list_sessions(character_id, limit, offset)
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("Task failed: {e}")))?
+    .map_err(|e| ServerFnError::new(format!("Failed to list sessions: {e}")))
 }
 
 #[server(GetChatMessages, "/api")]
@@ -73,8 +72,7 @@ pub async fn get_chat_messages(session_id: Uuid) -> Result<Vec<Message>, ServerF
     use crate::db::Db;
     use crate::services::chat_service::ChatService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || ChatService::new(db).list_messages(session_id))
         .await
@@ -87,8 +85,7 @@ pub async fn delete_chat_session(id: Uuid) -> Result<(), ServerFnError> {
     use crate::db::Db;
     use crate::services::chat_service::ChatService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || ChatService::new(db).delete_session(id))
         .await
@@ -113,8 +110,7 @@ pub async fn stream_chat_reply(
     use crate::models::message::{MessageRole, NewMessage};
     use crate::services::chat_service::ChatService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     // Persist the user's message first.
     {
@@ -150,8 +146,7 @@ pub async fn stream_regenerate(
     use crate::models::message::MessageRole;
     use crate::services::chat_service::ChatService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     // Delete trailing assistant messages so the prompt ends on the user turn.
     {
@@ -198,8 +193,7 @@ pub async fn edit_user_message(
         return Err(ServerFnError::new("Message cannot be empty"));
     }
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let chat = ChatService::new(db);
@@ -235,7 +229,6 @@ async fn stream_reply(
     provider_id: Uuid,
     model: String,
 ) -> Result<TextStream, ServerFnError> {
-    use futures::StreamExt;
     use crate::models::message::{MessageRole, NewMessage};
     use crate::providers::registry::build_provider;
     use crate::providers::traits::StreamEvent;
@@ -243,6 +236,7 @@ async fn stream_reply(
     use crate::services::chat_service::ChatService;
     use crate::services::provider_service::ProviderService;
     use crate::services::settings_service::SettingsService;
+    use futures::StreamExt;
 
     // Gather prompt + provider config + sampling params on the blocking pool.
     let (prompt, provider, sampling) = {

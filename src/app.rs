@@ -1,15 +1,15 @@
+use crate::components::layout::MainLayout;
+use crate::components::ui::toast::{ToastProvider, Toaster};
+use crate::pages::characters_page::CharactersPage;
+use crate::pages::chat_page::ChatPage;
+use crate::pages::home_page::HomePage;
+use crate::pages::settings_page::SettingsPage;
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{ParentRoute, Route, Router, Routes},
     ParamSegment, StaticSegment,
 };
-use crate::components::layout::MainLayout;
-use crate::components::ui::toast::{ToastProvider, Toaster};
-use crate::pages::home_page::HomePage;
-use crate::pages::chat_page::ChatPage;
-use crate::pages::characters_page::CharactersPage;
-use crate::pages::settings_page::SettingsPage;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {

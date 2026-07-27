@@ -114,13 +114,28 @@ impl SettingsService {
         let tx = conn.transaction().context("begin settings transaction")?;
 
         let pairs = [
-            (KEY_DEFAULT_SYSTEM_PROMPT, serde_json::to_string(&settings.default_system_prompt)?),
+            (
+                KEY_DEFAULT_SYSTEM_PROMPT,
+                serde_json::to_string(&settings.default_system_prompt)?,
+            ),
             (KEY_USER_NAME, serde_json::to_string(&settings.user_name)?),
-            (KEY_DEFAULT_PROVIDER_ID, serde_json::to_string(&settings.default_provider_id)?),
-            (KEY_DEFAULT_MODEL, serde_json::to_string(&settings.default_model)?),
+            (
+                KEY_DEFAULT_PROVIDER_ID,
+                serde_json::to_string(&settings.default_provider_id)?,
+            ),
+            (
+                KEY_DEFAULT_MODEL,
+                serde_json::to_string(&settings.default_model)?,
+            ),
             (KEY_THEME, serde_json::to_string(&settings.theme)?),
-            (KEY_RENDER_THINKING, serde_json::to_string(&settings.render_thinking)?),
-            (KEY_TEMPERATURE, serde_json::to_string(&settings.temperature)?),
+            (
+                KEY_RENDER_THINKING,
+                serde_json::to_string(&settings.render_thinking)?,
+            ),
+            (
+                KEY_TEMPERATURE,
+                serde_json::to_string(&settings.temperature)?,
+            ),
             (KEY_TOP_P, serde_json::to_string(&settings.top_p)?),
             (KEY_MAX_TOKENS, serde_json::to_string(&settings.max_tokens)?),
         ];

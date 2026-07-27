@@ -1,5 +1,5 @@
-use leptos::prelude::*;
 use leptos::callback::Callable;
+use leptos::prelude::*;
 use leptos::wasm_bindgen::JsCast;
 
 #[derive(Debug, Clone)]
@@ -11,7 +11,11 @@ pub struct SelectOption {
 
 impl SelectOption {
     pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
-        Self { value: value.into(), label: label.into(), disabled: false }
+        Self {
+            value: value.into(),
+            label: label.into(),
+            disabled: false,
+        }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -29,7 +33,8 @@ pub fn Select(
     #[prop(into, optional)] disabled: MaybeProp<bool>,
     #[prop(into, optional)] class: MaybeProp<String>,
     /// `id` for associating an external `<label for=...>`.
-    #[prop(optional)] id: &'static str,
+    #[prop(optional)]
+    id: &'static str,
 ) -> impl IntoView {
     let handle_change = move |ev: leptos::web_sys::Event| {
         let target = ev.target().unwrap();

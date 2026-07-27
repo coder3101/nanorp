@@ -9,7 +9,8 @@ pub fn Field(
     for_id: &'static str,
     #[prop(optional)] hint: &'static str,
     /// Inline validation error, rendered below the control when non-empty.
-    #[prop(optional, into)] error: MaybeProp<String>,
+    #[prop(optional, into)]
+    error: MaybeProp<String>,
     children: Children,
 ) -> impl IntoView {
     view! {

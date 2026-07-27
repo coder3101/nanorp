@@ -46,8 +46,12 @@ mod client {
 
     /// Toggle the `dark` class on `<html>` for the given theme value.
     pub fn apply(theme: &str) {
-        let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
-        let Some(root) = doc.document_element() else { return };
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+            return;
+        };
+        let Some(root) = doc.document_element() else {
+            return;
+        };
         let dark = match theme {
             "dark" => true,
             "light" => false,

@@ -10,8 +10,7 @@ pub async fn list_characters() -> Result<Vec<Character>, ServerFnError> {
     use crate::db::Db;
     use crate::services::character_service::CharacterService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || CharacterService::new(db).list())
         .await
@@ -24,8 +23,7 @@ pub async fn get_character(id: Uuid) -> Result<Option<Character>, ServerFnError>
     use crate::db::Db;
     use crate::services::character_service::CharacterService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || CharacterService::new(db).get(id))
         .await
@@ -46,8 +44,7 @@ pub async fn create_character(new: NewCharacter) -> Result<Character, ServerFnEr
         return Err(ServerFnError::new("Character name is too long (max 100)"));
     }
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || CharacterService::new(db).create(&new))
         .await
@@ -66,8 +63,7 @@ pub async fn update_character(update: UpdateCharacter) -> Result<Character, Serv
         }
     }
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || CharacterService::new(db).update(&update))
         .await
@@ -80,8 +76,7 @@ pub async fn delete_character(id: Uuid) -> Result<(), ServerFnError> {
     use crate::db::Db;
     use crate::services::character_service::CharacterService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || CharacterService::new(db).delete(id))
         .await
@@ -97,10 +92,10 @@ pub async fn upload_character_avatar(
     data: String,
     content_type: String,
 ) -> Result<Character, ServerFnError> {
-    use base64::Engine;
     use crate::config;
     use crate::db::Db;
     use crate::services::character_service::CharacterService;
+    use base64::Engine;
 
     // Validate MIME type and derive a file extension.
     let ext = match content_type.as_str() {
@@ -125,8 +120,7 @@ pub async fn upload_character_avatar(
         return Err(ServerFnError::new("Image is too large (max 5 MB)"));
     }
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     let id_str = id.to_string();
     let rel_path = format!("avatars/{}.{}", id_str, ext);
@@ -156,8 +150,7 @@ pub async fn remove_character_avatar(id: Uuid) -> Result<Character, ServerFnErro
     use crate::db::Db;
     use crate::services::character_service::CharacterService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || CharacterService::new(db).set_avatar_path(id, None))
         .await

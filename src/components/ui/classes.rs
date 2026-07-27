@@ -12,6 +12,7 @@ pub const BTN_OUTLINE: &str = "inline-flex items-center justify-center gap-2 rou
     transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring \
     border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-10 px-4";
 
-pub const BTN_DESTRUCTIVE: &str = "inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium \
+pub const BTN_DESTRUCTIVE: &str =
+    "inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium \
     transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring \
     bg-destructive text-destructive-foreground shadow hover:bg-destructive/90 h-10 px-4";

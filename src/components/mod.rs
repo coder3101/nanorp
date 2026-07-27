@@ -2,7 +2,7 @@
 //! composites, and the app shell in `layout`.
 
 pub mod avatar;
-pub mod ui;
 pub mod chat;
-pub mod sidebar;
 pub mod layout;
+pub mod sidebar;
+pub mod ui;

@@ -1,13 +1,14 @@
-use leptos::prelude::*;
-use leptos::html;
 use leptos::callback::Callable;
+use leptos::html;
+use leptos::prelude::*;
 
 #[component]
 pub fn ScrollArea(
     #[prop(into, optional)] class: MaybeProp<String>,
     #[prop(optional)] node_ref: NodeRef<html::Div>,
     /// Fired on scroll of the scrolling element itself.
-    #[prop(optional)] on_scroll: Option<Callback<()>>,
+    #[prop(optional)]
+    on_scroll: Option<Callback<()>>,
     children: Children,
 ) -> impl IntoView {
     let base = "scroll-area relative overflow-y-auto overflow-x-hidden";

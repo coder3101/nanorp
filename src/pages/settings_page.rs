@@ -1,20 +1,22 @@
-use leptos::prelude::*;
-use leptos::callback::Callable;
-use leptos::wasm_bindgen::JsCast;
-use uuid::Uuid;
 use crate::components::ui::classes::{BTN_OUTLINE, BTN_PRIMARY, INPUT};
 use crate::components::ui::confirm::confirm;
 use crate::components::ui::field::Field;
 use crate::components::ui::modal::Modal;
 use crate::components::ui::select::{Select, SelectOption};
 use crate::components::ui::toast::{use_toast, ToastVariant};
-use crate::models::provider::{ConnectionStatus, NewProvider, Provider, ProviderType, UpdateProvider};
+use crate::models::provider::{
+    ConnectionStatus, NewProvider, Provider, ProviderType, UpdateProvider,
+};
 use crate::models::settings::AppSettings;
 use crate::server::provider::{
     create_provider, delete_provider, list_providers, test_provider_connection, update_provider,
 };
 use crate::server::settings::{get_settings, update_settings};
 use crate::theme;
+use leptos::callback::Callable;
+use leptos::prelude::*;
+use leptos::wasm_bindgen::JsCast;
+use uuid::Uuid;
 
 #[component]
 pub fn SettingsPage() -> impl IntoView {
@@ -51,11 +53,22 @@ pub fn SettingsPage() -> impl IntoView {
     let prov_url_error = RwSignal::new(Option::<String>::None);
     let saving = RwSignal::new(false);
     // Snapshot of the form as opened, for the unsaved-changes guard.
-    let prov_snapshot = StoredValue::new((String::new(), String::new(), String::new(), String::new(), false));
+    let prov_snapshot = StoredValue::new((
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+        false,
+    ));
 
     let is_editing_provider = Signal::derive(move || editing_provider.get().is_some());
     let provider_dialog_title = Signal::derive(move || {
-        if is_editing_provider.get() { "Edit Provider" } else { "Add Provider" }.to_string()
+        if is_editing_provider.get() {
+            "Edit Provider"
+        } else {
+            "Add Provider"
+        }
+        .to_string()
     });
 
     let open_add_provider = Callback::new(move |_| {
@@ -67,7 +80,13 @@ pub fn SettingsPage() -> impl IntoView {
         prov_form_default.set(false);
         prov_name_error.set(None);
         prov_url_error.set(None);
-        prov_snapshot.set_value((String::new(), "ollama".to_string(), String::new(), String::new(), false));
+        prov_snapshot.set_value((
+            String::new(),
+            "ollama".to_string(),
+            String::new(),
+            String::new(),
+            false,
+        ));
         provider_dialog_open.set(true);
     });
 
@@ -78,7 +97,13 @@ pub fn SettingsPage() -> impl IntoView {
             ProviderType::OpenAiCompatible => "openai_compatible".to_string(),
         };
         let key = p.api_key.unwrap_or_default();
-        prov_snapshot.set_value((p.name.clone(), type_str.clone(), p.api_url.clone(), key.clone(), p.is_default));
+        prov_snapshot.set_value((
+            p.name.clone(),
+            type_str.clone(),
+            p.api_url.clone(),
+            key.clone(),
+            p.is_default,
+        ));
         prov_form_name.set(p.name);
         prov_form_type.set(type_str);
         prov_form_url.set(p.api_url);
@@ -98,7 +123,9 @@ pub fn SettingsPage() -> impl IntoView {
             prov_form_key.get_untracked(),
             prov_form_default.get_untracked(),
         );
-        if current == prov_snapshot.get_value() || confirm("Discard unsaved changes to this provider?") {
+        if current == prov_snapshot.get_value()
+            || confirm("Discard unsaved changes to this provider?")
+        {
             provider_dialog_open.set(false);
             editing_provider.set(None);
         }
@@ -191,7 +218,9 @@ pub fn SettingsPage() -> impl IntoView {
     let statuses = RwSignal::new(std::collections::HashMap::<Uuid, ConnectionStatus>::new());
     let toast_test = toast.clone();
     let test_connection = Callback::new(move |id: Uuid| {
-        statuses.update(|m| { m.insert(id, ConnectionStatus::Testing); });
+        statuses.update(|m| {
+            m.insert(id, ConnectionStatus::Testing);
+        });
         let toast_inner = toast_test.clone();
         leptos::task::spawn_local(async move {
             match test_provider_connection(id).await {
@@ -199,14 +228,23 @@ pub fn SettingsPage() -> impl IntoView {
                     match &status {
                         ConnectionStatus::Connected => toast_inner.success("Connected"),
                         ConnectionStatus::Failed(reason) => {
-                            toast_inner.custom("Connection failed", Some(reason.clone()), ToastVariant::Error, 5000);
+                            toast_inner.custom(
+                                "Connection failed",
+                                Some(reason.clone()),
+                                ToastVariant::Error,
+                                5000,
+                            );
                         }
                         ConnectionStatus::Testing => {}
                     }
-                    statuses.update(|m| { m.insert(id, status); });
+                    statuses.update(|m| {
+                        m.insert(id, status);
+                    });
                 }
                 Err(e) => {
-                    statuses.update(|m| { m.insert(id, ConnectionStatus::Failed(e.to_string())); });
+                    statuses.update(|m| {
+                        m.insert(id, ConnectionStatus::Failed(e.to_string()));
+                    });
                     toast_inner.error(format!("Test failed: {e}"));
                 }
             }
@@ -247,7 +285,8 @@ pub fn SettingsPage() -> impl IntoView {
     // Switch tabs, warning if the General/Chat draft has unsaved edits.
     let switch_tab = Callback::new(move |id: &'static str| {
         let leaving_editable = matches!(active_tab.get_untracked().as_str(), "general" | "chat");
-        let dirty = leaving_editable && settings_draft.get_untracked() != settings_saved.get_value();
+        let dirty =
+            leaving_editable && settings_draft.get_untracked() != settings_saved.get_value();
         if dirty {
             if !confirm("You have unsaved settings changes. Discard them?") {
                 return;
@@ -736,14 +775,16 @@ fn ThemeOption(
                 <div class="h-1.5 w-12 rounded-full bg-zinc-300"></div>
                 <div class="mt-auto h-3 w-full rounded bg-zinc-100"></div>
             </div>
-        }.into_any(),
+        }
+        .into_any(),
         "dark" => view! {
             <div class="flex h-full w-full flex-col gap-1 rounded-md bg-zinc-900 p-2">
                 <div class="h-1.5 w-8 rounded-full bg-zinc-100"></div>
                 <div class="h-1.5 w-12 rounded-full bg-zinc-600"></div>
                 <div class="mt-auto h-3 w-full rounded bg-zinc-800"></div>
             </div>
-        }.into_any(),
+        }
+        .into_any(),
         _ => view! {
             <div class="flex h-full w-full overflow-hidden rounded-md">
                 <div class="flex w-1/2 flex-col gap-1 bg-white p-2">
@@ -755,7 +796,8 @@ fn ThemeOption(
                     <div class="mt-auto h-3 w-full rounded bg-zinc-800"></div>
                 </div>
             </div>
-        }.into_any(),
+        }
+        .into_any(),
     };
 
     view! {
@@ -816,13 +858,11 @@ fn ProviderCard(
     let p_for_edit = provider.clone();
 
     // Status dot color driven by the last test result.
-    let dot = move || {
-        match statuses.get().get(&p_id) {
-            Some(ConnectionStatus::Connected) => "bg-green-500",
-            Some(ConnectionStatus::Failed(_)) => "bg-red-500",
-            Some(ConnectionStatus::Testing) => "bg-yellow-500",
-            None => "bg-muted-foreground/40",
-        }
+    let dot = move || match statuses.get().get(&p_id) {
+        Some(ConnectionStatus::Connected) => "bg-green-500",
+        Some(ConnectionStatus::Failed(_)) => "bg-red-500",
+        Some(ConnectionStatus::Testing) => "bg-yellow-500",
+        None => "bg-muted-foreground/40",
     };
     let testing = move || matches!(statuses.get().get(&p_id), Some(ConnectionStatus::Testing));
 

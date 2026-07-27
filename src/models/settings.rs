@@ -41,7 +41,7 @@ impl Default for AppSettings {
             default_system_prompt: String::from(
                 "You are {{char}}. Stay in character at all times. \
                  Respond naturally and creatively to {{user}}'s messages. \
-                 Be descriptive and engaging."
+                 Be descriptive and engaging.",
             ),
             user_name: String::from("User"),
             default_provider_id: None,

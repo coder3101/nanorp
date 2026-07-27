@@ -26,7 +26,11 @@ impl ChatService {
 
     /// Create a session. If the character has a greeting, insert it as the
     /// first assistant message.
-    pub fn create_session(&self, new: &NewChatSession, greeting: Option<String>) -> Result<ChatSession> {
+    pub fn create_session(
+        &self,
+        new: &NewChatSession,
+        greeting: Option<String>,
+    ) -> Result<ChatSession> {
         let now = Utc::now();
         let session = ChatSession {
             id: Uuid::new_v4(),
@@ -103,20 +107,17 @@ impl ChatService {
              ORDER BY s.updated_at DESC
              LIMIT ?2 OFFSET ?3",
         )?;
-        let rows = stmt.query_map(
-            rusqlite::params![char_filter, limit, offset],
-            |row| {
-                Ok(ChatSummary {
-                    session_id: parse_uuid(row.get::<_, String>(0)?)?,
-                    character_id: parse_uuid(row.get::<_, String>(1)?)?,
-                    character_name: row.get(2)?,
-                    character_avatar_path: row.get(3)?,
-                    title: row.get(4)?,
-                    last_message: row.get(5)?,
-                    updated_at: parse_dt(row.get::<_, String>(6)?)?,
-                })
-            },
-        )?;
+        let rows = stmt.query_map(rusqlite::params![char_filter, limit, offset], |row| {
+            Ok(ChatSummary {
+                session_id: parse_uuid(row.get::<_, String>(0)?)?,
+                character_id: parse_uuid(row.get::<_, String>(1)?)?,
+                character_name: row.get(2)?,
+                character_avatar_path: row.get(3)?,
+                title: row.get(4)?,
+                last_message: row.get(5)?,
+                updated_at: parse_dt(row.get::<_, String>(6)?)?,
+            })
+        })?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r?);
@@ -168,11 +169,7 @@ impl ChatService {
         let preview: String = last_message.chars().take(120).collect();
         conn.execute(
             "UPDATE chat_sessions SET last_message = ?2, updated_at = ?3 WHERE id = ?1",
-            rusqlite::params![
-                session_id.to_string(),
-                preview,
-                Utc::now().to_rfc3339()
-            ],
+            rusqlite::params![session_id.to_string(), preview, Utc::now().to_rfc3339()],
         )
         .context("update session preview")?;
         Ok(())
@@ -282,7 +279,9 @@ impl ChatService {
                 content: row.get(3)?,
                 attachments: Vec::new(),
                 model_used: row.get(4)?,
-                provider_id: row.get::<_, Option<String>>(5)?.and_then(|s| s.parse().ok()),
+                provider_id: row
+                    .get::<_, Option<String>>(5)?
+                    .and_then(|s| s.parse().ok()),
                 created_at: parse_dt(row.get::<_, String>(6)?)?,
             })),
             None => Ok(None),
@@ -330,7 +329,10 @@ impl ChatService {
 
         // Enforce the per-message cap before mutating anything, so a rejected
         // edit leaves the existing attachments untouched.
-        let kept_count = current.iter().filter(|(id, _)| keep_ids.contains(id)).count();
+        let kept_count = current
+            .iter()
+            .filter(|(id, _)| keep_ids.contains(id))
+            .count();
         if kept_count + new_images.len() > MAX_IMAGES_PER_MESSAGE {
             anyhow::bail!(
                 "too many attachments: {} (max {})",
@@ -416,9 +418,8 @@ impl ChatService {
         let to_delete: Vec<Uuid> = {
             let conn = self.db.conn();
             let conn = conn.lock().expect("db mutex poisoned");
-            let mut stmt = conn.prepare(
-                "SELECT id FROM messages WHERE session_id = ?1 AND created_at > ?2",
-            )?;
+            let mut stmt =
+                conn.prepare("SELECT id FROM messages WHERE session_id = ?1 AND created_at > ?2")?;
             let rows = stmt.query_map(
                 rusqlite::params![session_id.to_string(), anchor.created_at.to_rfc3339()],
                 |row| row.get::<_, String>(0),
@@ -443,8 +444,7 @@ impl ChatService {
     fn attachment_paths_for_message(&self, message_id: Uuid) -> Result<Vec<String>> {
         let conn = self.db.conn();
         let conn = conn.lock().expect("db mutex poisoned");
-        let mut stmt =
-            conn.prepare("SELECT file_path FROM attachments WHERE message_id = ?1")?;
+        let mut stmt = conn.prepare("SELECT file_path FROM attachments WHERE message_id = ?1")?;
         let rows = stmt.query_map(rusqlite::params![message_id.to_string()], |row| {
             row.get::<_, String>(0)
         })?;
@@ -580,7 +580,12 @@ fn build_system_prompt(
 
     // A small "character card" block that always carries the structured fields.
     let mut card = format!("Name: {}", character.name);
-    if let Some(role) = character.role.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(role) = character
+        .role
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         card.push_str(&format!("\nRole: {role}"));
     }
     sections.push(card);
@@ -611,8 +616,8 @@ fn load_images(attachments: &[Attachment]) -> Result<Vec<LlmImage>> {
     let mut images = Vec::new();
     for att in attachments {
         let full = config::config_dir()?.join(&att.file_path);
-        let bytes = std::fs::read(&full)
-            .with_context(|| format!("read attachment {}", att.file_path))?;
+        let bytes =
+            std::fs::read(&full).with_context(|| format!("read attachment {}", att.file_path))?;
         images.push(LlmImage {
             base64_data: base64::engine::general_purpose::STANDARD.encode(&bytes),
             content_type: att.content_type.clone(),
@@ -642,9 +647,8 @@ fn save_image_upload(
     message_id: Uuid,
     now: chrono::DateTime<Utc>,
 ) -> Result<Attachment> {
-    let ext = mime_to_extension(&img.content_type).ok_or_else(|| {
-        anyhow::anyhow!("unsupported attachment type: {}", img.content_type)
-    })?;
+    let ext = mime_to_extension(&img.content_type)
+        .ok_or_else(|| anyhow::anyhow!("unsupported attachment type: {}", img.content_type))?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(img.data.as_bytes())
         .context("decode attachment base64")?;
@@ -696,7 +700,11 @@ fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<ChatSession> {
 
 fn parse_uuid(s: String) -> rusqlite::Result<Uuid> {
     s.parse().map_err(|_| {
-        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, "invalid uuid".into())
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            "invalid uuid".into(),
+        )
     })
 }
 
@@ -755,7 +763,10 @@ mod tests {
 
         let session = chat
             .create_session(
-                &NewChatSession { character_id: character.id, title: None },
+                &NewChatSession {
+                    character_id: character.id,
+                    title: None,
+                },
                 character.greeting.clone(),
             )
             .unwrap();
@@ -774,7 +785,10 @@ mod tests {
 
         let session = chat
             .create_session(
-                &NewChatSession { character_id: character.id, title: None },
+                &NewChatSession {
+                    character_id: character.id,
+                    title: None,
+                },
                 Some("   ".to_string()),
             )
             .unwrap();
@@ -788,14 +802,23 @@ mod tests {
         let character = make_character(&db, None);
         let chat = ChatService::new(db);
         let session = chat
-            .create_session(&NewChatSession { character_id: character.id, title: None }, None)
+            .create_session(
+                &NewChatSession {
+                    character_id: character.id,
+                    title: None,
+                },
+                None,
+            )
             .unwrap();
 
         chat.add_message(&user_message(session.id, "Tell me a story about dragons"))
             .unwrap();
 
         let reloaded = chat.get_session(session.id).unwrap().unwrap();
-        assert_eq!(reloaded.title.as_deref(), Some("Tell me a story about dragons"));
+        assert_eq!(
+            reloaded.title.as_deref(),
+            Some("Tell me a story about dragons")
+        );
         assert_eq!(
             reloaded.last_message.as_deref(),
             Some("Tell me a story about dragons")
@@ -808,15 +831,25 @@ mod tests {
         let character = make_character(&db, None);
         let chat = ChatService::new(db);
         let session = chat
-            .create_session(&NewChatSession { character_id: character.id, title: None }, None)
+            .create_session(
+                &NewChatSession {
+                    character_id: character.id,
+                    title: None,
+                },
+                None,
+            )
             .unwrap();
 
         // Timestamps need to be strictly increasing for the "after" cutoff.
-        let first = chat.add_message(&user_message(session.id, "first")).unwrap();
+        let first = chat
+            .add_message(&user_message(session.id, "first"))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(5));
-        chat.add_message(&user_message(session.id, "second")).unwrap();
+        chat.add_message(&user_message(session.id, "second"))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(5));
-        chat.add_message(&user_message(session.id, "third")).unwrap();
+        chat.add_message(&user_message(session.id, "third"))
+            .unwrap();
 
         let deleted = chat.delete_messages_after(session.id, first.id).unwrap();
         assert_eq!(deleted, 2);
@@ -832,9 +865,16 @@ mod tests {
         let character = make_character(&db, None);
         let chat = ChatService::new(db.clone());
         let session = chat
-            .create_session(&NewChatSession { character_id: character.id, title: None }, None)
+            .create_session(
+                &NewChatSession {
+                    character_id: character.id,
+                    title: None,
+                },
+                None,
+            )
             .unwrap();
-        chat.add_message(&user_message(session.id, "hello")).unwrap();
+        chat.add_message(&user_message(session.id, "hello"))
+            .unwrap();
 
         chat.delete_session(session.id).unwrap();
 
@@ -848,7 +888,13 @@ mod tests {
         let character = make_character(&db, None);
         let chat = ChatService::new(db);
         let session = chat
-            .create_session(&NewChatSession { character_id: character.id, title: None }, None)
+            .create_session(
+                &NewChatSession {
+                    character_id: character.id,
+                    title: None,
+                },
+                None,
+            )
             .unwrap();
         chat.add_message(&user_message(session.id, "Hi {{char}}, I'm {{user}}."))
             .unwrap();
@@ -861,7 +907,9 @@ mod tests {
         assert_eq!(prompt[0].role, MessageRole::System);
         assert!(prompt[0].content.contains("You are Luna, talking to Sam."));
         assert!(prompt[0].content.contains("Name: Luna"));
-        assert!(prompt[0].content.contains("Personality:\nPatient and curious"));
+        assert!(prompt[0]
+            .content
+            .contains("Personality:\nPatient and curious"));
         assert_eq!(prompt[1].content, "Hi Luna, I'm Sam.");
     }
 

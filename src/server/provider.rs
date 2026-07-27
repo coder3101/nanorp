@@ -10,8 +10,7 @@ pub async fn list_providers() -> Result<Vec<Provider>, ServerFnError> {
     use crate::db::Db;
     use crate::services::provider_service::ProviderService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || ProviderService::new(db).list())
         .await
@@ -31,8 +30,7 @@ pub async fn create_provider(new: NewProvider) -> Result<Provider, ServerFnError
         return Err(ServerFnError::new("API URL is required"));
     }
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || ProviderService::new(db).create(&new))
         .await
@@ -45,8 +43,7 @@ pub async fn update_provider(update: UpdateProvider) -> Result<Provider, ServerF
     use crate::db::Db;
     use crate::services::provider_service::ProviderService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || ProviderService::new(db).update(&update))
         .await
@@ -59,8 +56,7 @@ pub async fn delete_provider(id: Uuid) -> Result<(), ServerFnError> {
     use crate::db::Db;
     use crate::services::provider_service::ProviderService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || ProviderService::new(db).delete(id))
         .await
@@ -75,8 +71,7 @@ pub async fn list_provider_models(id: Uuid) -> Result<Vec<ModelInfo>, ServerFnEr
     use crate::providers::registry::build_provider;
     use crate::services::provider_service::ProviderService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     let provider = tokio::task::spawn_blocking(move || ProviderService::new(db).get(id))
         .await
@@ -97,8 +92,7 @@ pub async fn test_provider_connection(id: Uuid) -> Result<ConnectionStatus, Serv
     use crate::models::provider::ProviderType;
     use crate::services::provider_service::ProviderService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     // Load the provider config off the async runtime.
     let db_for_lookup = db.clone();

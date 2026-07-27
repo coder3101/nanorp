@@ -9,13 +9,16 @@ use leptos::prelude::*;
 pub fn Modal(
     open: RwSignal<bool>,
     /// Accessible name for the dialog.
-    #[prop(into)] label: Signal<String>,
+    #[prop(into)]
+    label: Signal<String>,
     /// Extra classes for the panel (typically a max-width and padding).
-    #[prop(into, optional)] class: MaybeProp<String>,
+    #[prop(into, optional)]
+    class: MaybeProp<String>,
     /// Invoked when the user tries to dismiss the modal (overlay click or
     /// Escape). Defaults to simply closing; pass a callback to intercept,
     /// e.g. to confirm discarding unsaved changes.
-    #[prop(optional)] on_close: Option<Callback<()>>,
+    #[prop(optional)]
+    on_close: Option<Callback<()>>,
     children: ChildrenFn,
 ) -> impl IntoView {
     let children = std::sync::Arc::new(children);
@@ -47,11 +50,9 @@ fn ModalPanel(
 ) -> impl IntoView {
     let panel_ref = NodeRef::<html::Div>::new();
 
-    let request_close = move || {
-        match on_close {
-            Some(cb) => cb.run(()),
-            None => open.set(false),
-        }
+    let request_close = move || match on_close {
+        Some(cb) => cb.run(()),
+        None => open.set(false),
     };
 
     let escape_handle = leptos::leptos_dom::helpers::window_event_listener(
@@ -143,7 +144,10 @@ fn trap_tab(ev: &leptos::web_sys::KeyboardEvent, panel: &leptos::web_sys::HtmlEl
     };
     let mut focusable: Vec<leptos::web_sys::HtmlElement> = Vec::new();
     for i in 0..nodes.length() {
-        if let Some(el) = nodes.item(i).and_then(|n| n.dyn_into::<leptos::web_sys::HtmlElement>().ok()) {
+        if let Some(el) = nodes
+            .item(i)
+            .and_then(|n| n.dyn_into::<leptos::web_sys::HtmlElement>().ok())
+        {
             // `offset_parent` is None for display:none elements.
             if el.offset_parent().is_some() {
                 focusable.push(el);

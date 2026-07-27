@@ -45,7 +45,10 @@ impl ProviderService {
         let tx = conn.transaction()?;
 
         if provider.is_default {
-            tx.execute("UPDATE providers SET is_default = 0 WHERE is_default = 1", [])?;
+            tx.execute(
+                "UPDATE providers SET is_default = 0 WHERE is_default = 1",
+                [],
+            )?;
         }
 
         tx.execute(
@@ -132,7 +135,10 @@ impl ProviderService {
         let mut merged = Provider {
             id: existing.id,
             name: update.name.clone().unwrap_or(existing.name),
-            provider_type: update.provider_type.clone().unwrap_or(existing.provider_type),
+            provider_type: update
+                .provider_type
+                .clone()
+                .unwrap_or(existing.provider_type),
             api_url: update
                 .api_url
                 .clone()
@@ -203,7 +209,6 @@ impl ProviderService {
             None => Ok(None),
         }
     }
-
 }
 
 /// Replace a provider's stored api_key with its decrypted form. A decryption
@@ -331,7 +336,9 @@ mod tests {
         let db = test_db();
         let svc = ProviderService::new(db.clone());
 
-        let created = svc.create(&new_provider("OpenAI", Some("sk-secret-123"))).unwrap();
+        let created = svc
+            .create(&new_provider("OpenAI", Some("sk-secret-123")))
+            .unwrap();
         assert_eq!(created.api_key.as_deref(), Some("sk-secret-123"));
 
         // At rest: encrypted, plaintext nowhere in the stored value.

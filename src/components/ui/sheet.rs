@@ -1,6 +1,6 @@
-use leptos::prelude::*;
-use leptos::html;
 use leptos::callback::Callable;
+use leptos::html;
+use leptos::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum SheetSide {
@@ -56,9 +56,7 @@ pub fn Sheet(
 }
 
 #[component]
-fn SheetOverlay(
-    on_close: Callback<()>,
-) -> impl IntoView {
+fn SheetOverlay(on_close: Callback<()>) -> impl IntoView {
     view! {
         <div
             class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm animate-fade-in"
@@ -68,11 +66,7 @@ fn SheetOverlay(
 }
 
 #[component]
-fn SheetContent(
-    side: SheetSide,
-    on_close: Callback<()>,
-    children: Children,
-) -> impl IntoView {
+fn SheetContent(side: SheetSide, on_close: Callback<()>, children: Children) -> impl IntoView {
     let content_ref = NodeRef::<html::Div>::new();
     let fixed = side.fixed_classes();
     let enter = side.enter_animation();

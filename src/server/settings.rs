@@ -9,8 +9,7 @@ pub async fn get_settings() -> Result<AppSettings, ServerFnError> {
     use crate::db::Db;
     use crate::services::settings_service::SettingsService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || SettingsService::new(db).get_all())
         .await
@@ -23,8 +22,7 @@ pub async fn update_settings(settings: AppSettings) -> Result<(), ServerFnError>
     use crate::db::Db;
     use crate::services::settings_service::SettingsService;
 
-    let db = use_context::<Db>()
-        .ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || SettingsService::new(db).set_all(&settings))
         .await

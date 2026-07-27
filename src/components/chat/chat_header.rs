@@ -1,7 +1,7 @@
+use crate::components::chat::model_selector::ModelSelector;
+use crate::models::character::Character;
 use leptos::prelude::*;
 use uuid::Uuid;
-use crate::models::character::Character;
-use crate::components::chat::model_selector::ModelSelector;
 
 #[component]
 pub fn ChatHeader(
@@ -25,7 +25,8 @@ pub fn ChatHeader(
                     alt=""
                     class="h-8 w-8 shrink-0 rounded-full object-cover shadow-sm"
                 />
-            }.into_any(),
+            }
+            .into_any(),
             None => view! {
                 <div class=format!(
                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-full \
@@ -34,7 +35,8 @@ pub fn ChatHeader(
                 )>
                     {crate::components::avatar::initial(&name)}
                 </div>
-            }.into_any(),
+            }
+            .into_any(),
         }
     };
 
