@@ -17,13 +17,20 @@ Bring your own characters. Bring your own models. Everything stays on your machi
 
 ## Demo
 
-<div align="center">
+https://github.com/user-attachments/assets/5b9d48af-aff3-41fa-b20f-04613df05a29
 
-<video src="https://github.com/coder3101/nanorp/raw/main/assets/demo.mp4" controls muted loop width="720">
-  <a href="https://github.com/coder3101/nanorp/raw/main/assets/demo.mp4">Watch the demo video</a>
-</video>
+## Contents
 
-</div>
+- [Small by design](#small-by-design)
+- [Quick start](#quick-start)
+  - [Your data](#your-data)
+- [First steps](#first-steps)
+- [Features](#features)
+- [Configuration](#configuration)
+- [Development](#development)
+  - [Layout](#layout)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Small by design
 
@@ -43,36 +50,6 @@ instance, and a Redis cache. NanoRP is one binary and one file.
 It's built to sit quietly on a Raspberry Pi, a free-tier VPS, or your laptop
 alongside everything else. Your GPU should be busy running the model, not your
 web stack.
-
-## Features
-
-**Characters**
-- Name, role, personality, system prompt, greeting, and avatar
-- `{{char}}` / `{{user}}` placeholders resolved at prompt-build time
-- Duplicate, search, and import/export as JSON
-
-**Models**
-- [Ollama](https://ollama.com) and any OpenAI-compatible endpoint
-- Configure several providers and switch model mid-conversation
-- API keys are encrypted at rest (ChaCha20-Poly1305)
-- Sampling controls: temperature, top-p, max tokens
-
-**Chat**
-- Token-by-token streaming, with stop-and-cancel that reaches the provider
-- Collapsible reasoning ("thinking") blocks for reasoning models
-- Edit your messages — text *and* images — then regenerate from that point
-- Image attachments for vision models (up to 5 per message)
-- Markdown rendering, one-click copy
-
-**Interface**
-- Responsive down to phone widths, with a proper mobile layout
-- Light and dark themes, no flash on first paint
-- Keyboard navigable menus and dialogs, focus trapping, ARIA labels, and
-  `prefers-reduced-motion` support
-
-**Yours**
-- No telemetry, no accounts, no cloud dependency
-- Every message, image, and key stays in a directory you control
 
 ## Quick start
 
@@ -114,6 +91,36 @@ its owner.
    - **OpenAI-compatible** — a URL like `https://api.openai.com` plus a key
 2. Go to **Characters** and create one.
 3. Hit **Chat**, pick a model, and start talking.
+
+## Features
+
+**Characters**
+- Name, role, personality, system prompt, greeting, and avatar
+- `{{char}}` / `{{user}}` placeholders resolved at prompt-build time
+- Duplicate, search, and import/export as JSON
+
+**Models**
+- [Ollama](https://ollama.com) and any OpenAI-compatible endpoint
+- Configure several providers and switch model mid-conversation
+- API keys are encrypted at rest (ChaCha20-Poly1305)
+- Sampling controls: temperature, top-p, max tokens
+
+**Chat**
+- Token-by-token streaming, with stop-and-cancel that reaches the provider
+- Collapsible reasoning ("thinking") blocks for reasoning models
+- Edit your messages — text *and* images — then regenerate from that point
+- Image attachments for vision models (up to 5 per message)
+- Markdown rendering, one-click copy
+
+**Interface**
+- Responsive down to phone widths, with a proper mobile layout
+- Light and dark themes, no flash on first paint
+- Keyboard navigable menus and dialogs, focus trapping, ARIA labels, and
+  `prefers-reduced-motion` support
+
+**Yours**
+- No telemetry, no accounts, no cloud dependency
+- Every message, image, and key stays in a directory you control
 
 ## Configuration
 
