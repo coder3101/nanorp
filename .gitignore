@@ -1,0 +1,15 @@
+# Build artifacts
+debug/
+target/
+
+# Cargo.lock IS committed: this crate ships a binary, so the lockfile is what
+# makes CI and Docker builds reproducible.
+
+# rustfmt backups
+**/*.rs.bk
+
+# MSVC debugging info
+*.pdb
+
+# OS cruft
+.DS_Store

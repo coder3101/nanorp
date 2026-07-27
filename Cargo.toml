@@ -1,0 +1,156 @@
+[package]
+name = "nanorp"
+version = "0.1.0"
+edition = "2021"
+description = "A lightweight, self-hosted AI roleplay chat — bring your own characters and models."
+repository = "https://github.com/coder3101/nanorp"
+license = "MIT"
+readme = "README.md"
+keywords = ["leptos", "llm", "roleplay", "chat", "self-hosted"]
+categories = ["web-programming"]
+# Branding art and CI config aren't inputs to the build, so keep them out of
+# the packaged crate (and out of Cargo's change detection).
+exclude = ["assets/", ".github/"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# -- Leptos ecosystem --
+leptos = { version = "0.8" }
+leptos_router = { version = "0.8" }
+leptos_meta = { version = "0.8" }
+leptos_axum = { version = "0.8", optional = true }
+
+# The UI uses custom shadcn-style components (src/components/ui/*); avoid the
+# `leptos-shadcn-ui` meta-crate — its transitive deps fail to build on wasm32.
+
+# -- Web framework (server) --
+axum = { version = "0.8", optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.6", features = ["cors", "fs"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"], optional = true }
+
+# -- WASM --
+wasm-bindgen = { version = "0.2", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+web-sys = { version = "0.3", features = [
+    "Window", "Document", "HtmlElement", "ScrollBehavior",
+    "ScrollToOptions", "KeyboardEvent", "HtmlTextAreaElement",
+    "MutationObserver", "MutationObserverInit", "MutationRecord",
+    "EventSource", "MessageEvent", "AbortController", "AbortSignal",
+    "Headers", "Request", "RequestInit", "Response", "ReadableStream",
+    "File", "FileList", "FileReader", "ClipboardEvent",
+    "DataTransfer", "DataTransferItem", "DataTransferItemList",
+    "HtmlInputElement", "HtmlSelectElement", "MediaQueryList",
+    "MouseEvent", "Node", "CssStyleDeclaration", "Storage",
+    "Navigator", "Clipboard", "Element", "NodeList",
+], optional = true }
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+
+# -- Database --
+rusqlite = { version = "0.34", features = ["bundled"], optional = true }
+
+# -- Serialization --
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+
+# -- HTTP client (for LLM providers, server-side) --
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"], optional = true }
+futures = "0.3"
+
+# -- Unique IDs --
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# -- Time --
+chrono = { version = "0.4", features = ["serde"] }
+
+# -- Markdown rendering (shared: SSR renders initial HTML, the WASM client
+# re-renders streamed/edited content) --
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+
+# -- Logging --
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", optional = true }
+
+# -- Error handling --
+thiserror = "2"
+anyhow = "1"
+
+# -- Async traits --
+async-trait = "0.1"
+
+# -- SSE / streaming support --
+tokio-stream = { version = "0.1", optional = true }
+axum-extra = { version = "0.10", features = ["typed-header"], optional = true }
+async-stream = { version = "0.3", optional = true }
+
+# -- Config directory --
+dirs = { version = "6", optional = true }
+
+# -- Base64 (avatar/image encode-decode, server-side) --
+base64 = { version = "0.22", optional = true }
+
+# -- API key encryption at rest (server-side) --
+chacha20poly1305 = { version = "0.10", optional = true }
+
+[features]
+hydrate = [
+    "leptos/hydrate",
+    "dep:console_error_panic_hook",
+    "dep:wasm-bindgen",
+    "dep:web-sys",
+    "dep:js-sys",
+    "dep:wasm-bindgen-futures",
+]
+ssr = [
+    "dep:axum",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:tokio",
+    "dep:leptos_axum",
+    "dep:rusqlite",
+    "dep:reqwest",
+    "dep:tracing-subscriber",
+    "dep:tokio-stream",
+    "dep:axum-extra",
+    "dep:async-stream",
+    "dep:dirs",
+    "dep:base64",
+    "dep:chacha20poly1305",
+    "leptos/ssr",
+    "leptos_meta/ssr",
+    "leptos_router/ssr",
+]
+
+# On wasm, uuid needs an explicit randomness source to generate v4 UUIDs.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1", features = ["v4", "serde", "js"] }
+
+# Size-optimized WASM release profile
+[profile.wasm-release]
+inherits = "release"
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.leptos]
+output-name = "nanorp"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+assets-dir = "public"
+site-addr = "127.0.0.1:3000"
+reload-port = 3001
+browserquery = "defaults"
+env = "DEV"
+bin-features = ["ssr"]
+bin-default-features = false
+lib-features = ["hydrate"]
+lib-default-features = false
+lib-profile-release = "wasm-release"
+# Tailwind CSS (v4, CSS-first config) via cargo-leptos.
+# The design tokens and theme live directly in style/tailwind.css using @theme,
+# so no tailwind.config.js is required.
+tailwind-input-file = "style/tailwind.css"

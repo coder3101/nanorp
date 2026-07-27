@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch/PR makes the in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  server:
+    name: Test & lint (server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --all-targets --features ssr --no-default-features -- -D warnings
+
+      - name: Test
+        run: cargo test --features ssr --no-default-features
+
+  client:
+    name: Lint (wasm client)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Only the lib is compiled to wasm; the bin is server-only.
+      - name: Clippy
+        run: >-
+          cargo clippy --lib --target wasm32-unknown-unknown
+          --features hydrate --no-default-features -- -D warnings
+
+  image:
+    name: Build image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Builds exactly what a release publishes (binary + wasm + CSS), so a
+      # broken Dockerfile or release build fails here instead of at tag time.
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

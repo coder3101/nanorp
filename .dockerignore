@@ -1,0 +1,30 @@
+# Build artifacts
+target/
+debug/
+
+# Rust backups
+**/*.rs.bk
+*.pdb
+
+# Node / tooling
+node_modules/
+
+# Docker, CI & VCS
+.git/
+.gitignore
+.github/
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Branding art — only used by the README, never by the build
+assets/
+
+# LICENSE isn't needed to build; README.md is kept because Cargo.toml's
+# `readme` field points at it.
+LICENSE

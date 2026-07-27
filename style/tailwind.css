@@ -1,0 +1,244 @@
+@import "tailwindcss";
+
+/* Scan Rust source for utility classes (Tailwind v4 content detection). */
+@source "../src/**/*.rs";
+
+/* =============================================================================
+ * Tailwind v4 configuration (CSS-first)
+ * Dark mode is driven by a `.dark` class on <html> (toggled at runtime).
+ * ========================================================================== */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Touch devices have no hover, so hover-revealed actions must stay visible. */
+@custom-variant pointer-coarse {
+  @media (pointer: coarse) {
+    @slot;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * Design tokens — shadcn/ui palette (zinc neutrals, high-contrast primary).
+ * Exposed to Tailwind as color utilities via @theme so classes like
+ * `bg-background`, `text-foreground`, `border-border`, `bg-primary`, etc. work.
+ * -------------------------------------------------------------------------- */
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --font-sans: Inter, system-ui, -apple-system, sans-serif;
+
+  --animate-fade-in: fade-in 0.2s ease-out;
+  --animate-fade-out: fade-out 0.2s ease-in;
+  --animate-slide-in-from-bottom: slide-in-from-bottom 0.3s ease-out;
+  --animate-slide-out-to-bottom: slide-out-to-bottom 0.3s ease-in;
+  --animate-slide-in-from-left: slide-in-from-left 0.25s ease-out;
+  --animate-slide-in-from-right: slide-in-from-right 0.25s ease-out;
+  --animate-slide-in-from-top: slide-in-from-top 0.25s ease-out;
+}
+
+/* Raw HSL channel values consumed by the tokens above. */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 240 5.9% 10%;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 5.9% 10%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 240 4.9% 83.9%;
+}
+
+/* Keyframes for the animation tokens declared in @theme. */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes slide-in-from-bottom {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes slide-out-to-bottom {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+@keyframes slide-in-from-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+@keyframes slide-in-from-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes slide-in-from-top {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+/* Respect the user's reduced-motion preference: collapse all animations and
+ * transitions to (near-)instant. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* iOS Safari zooms the viewport when a focused form control's font-size is
+ * under 16px, and never zooms back out. Force 16px on phone-width screens
+ * (below Tailwind's `sm`); the tighter type scale still applies from `sm` up.
+ * Deliberately unlayered so it wins over `text-sm` and friends. */
+@media (max-width: 639px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * Base element styles.
+ * -------------------------------------------------------------------------- */
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: var(--font-sans);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+ * Custom thin scrollbar for ScrollArea.
+ * -------------------------------------------------------------------------- */
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+.scroll-area::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--border));
+  border-radius: 3px;
+}
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground));
+}
+
+/* -----------------------------------------------------------------------------
+ * Minimal prose styles for markdown-rendered assistant messages.
+ * (Replaces @tailwindcss/typography to avoid an npm dependency.)
+ * -------------------------------------------------------------------------- */
+.prose {
+  line-height: 1.65;
+  word-break: break-word;
+}
+.prose p { margin: 0.5em 0; }
+.prose p:first-child { margin-top: 0; }
+.prose p:last-child { margin-bottom: 0; }
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  font-weight: 600;
+  margin: 0.8em 0 0.4em;
+  line-height: 1.3;
+}
+.prose h1 { font-size: 1.4em; }
+.prose h2 { font-size: 1.25em; }
+.prose h3 { font-size: 1.1em; }
+.prose ul, .prose ol { margin: 0.5em 0; padding-left: 1.4em; }
+.prose ul { list-style: disc; }
+.prose ol { list-style: decimal; }
+.prose li { margin: 0.2em 0; }
+.prose a { color: hsl(var(--primary)); text-decoration: underline; }
+.prose blockquote {
+  border-left: 3px solid hsl(var(--border));
+  padding-left: 0.9em;
+  margin: 0.6em 0;
+  color: hsl(var(--muted-foreground));
+}
+.prose code {
+  background-color: hsl(var(--muted));
+  border-radius: 0.25rem;
+  padding: 0.1em 0.35em;
+  font-size: 0.875em;
+}
+.prose pre {
+  background-color: #18181b;
+  color: #f4f4f5;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.prose pre code {
+  background-color: transparent;
+  padding: 0;
+  color: inherit;
+}

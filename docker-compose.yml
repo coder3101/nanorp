@@ -1,0 +1,17 @@
+services:
+  nanorp:
+    # Use the prebuilt image, or run `docker compose build` to build locally.
+    image: ghcr.io/coder3101/nanorp:latest
+    build: .
+    container_name: nanorp
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persists the SQLite database, avatars, and attachments.
+      - nanorp-data:/data
+    environment:
+      RUST_LOG: info
+    restart: unless-stopped
+
+volumes:
+  nanorp-data:
