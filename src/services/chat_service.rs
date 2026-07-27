@@ -90,34 +90,49 @@ impl ChatService {
         }
     }
 
+    /// Newest-first page of conversations, optionally narrowed to one character
+    /// and/or to a free-text `query` matched against the character name, the
+    /// session title, and the last-message preview.
     pub fn list_sessions(
         &self,
         character_id: Option<Uuid>,
+        query: Option<&str>,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<ChatSummary>> {
         let conn = self.db.conn();
         let conn = conn.lock().expect("db mutex poisoned");
         let char_filter = character_id.map(|c| c.to_string());
+        let search = query
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(like_pattern);
         let mut stmt = conn.prepare(
             "SELECT s.id, s.character_id, c.name, c.avatar_path, s.title, s.last_message, s.updated_at
              FROM chat_sessions s
              JOIN characters c ON s.character_id = c.id
              WHERE (?1 IS NULL OR s.character_id = ?1)
+               AND (?2 IS NULL
+                    OR c.name LIKE ?2 ESCAPE '\\'
+                    OR s.title LIKE ?2 ESCAPE '\\'
+                    OR s.last_message LIKE ?2 ESCAPE '\\')
              ORDER BY s.updated_at DESC
-             LIMIT ?2 OFFSET ?3",
+             LIMIT ?3 OFFSET ?4",
         )?;
-        let rows = stmt.query_map(rusqlite::params![char_filter, limit, offset], |row| {
-            Ok(ChatSummary {
-                session_id: parse_uuid(row.get::<_, String>(0)?)?,
-                character_id: parse_uuid(row.get::<_, String>(1)?)?,
-                character_name: row.get(2)?,
-                character_avatar_path: row.get(3)?,
-                title: row.get(4)?,
-                last_message: row.get(5)?,
-                updated_at: parse_dt(row.get::<_, String>(6)?)?,
-            })
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![char_filter, search, limit, offset],
+            |row| {
+                Ok(ChatSummary {
+                    session_id: parse_uuid(row.get::<_, String>(0)?)?,
+                    character_id: parse_uuid(row.get::<_, String>(1)?)?,
+                    character_name: row.get(2)?,
+                    character_avatar_path: row.get(3)?,
+                    title: row.get(4)?,
+                    last_message: row.get(5)?,
+                    updated_at: parse_dt(row.get::<_, String>(6)?)?,
+                })
+            },
+        )?;
         let mut out = Vec::new();
         for r in rows {
             out.push(r?);
@@ -708,6 +723,22 @@ fn parse_uuid(s: String) -> rusqlite::Result<Uuid> {
     })
 }
 
+/// Wraps a search term in `%` for a substring `LIKE`, escaping the characters
+/// SQL treats as wildcards so that typing `%` or `_` searches for that
+/// character instead of matching everything. Pair with `ESCAPE '\'`.
+fn like_pattern(query: &str) -> String {
+    let mut pattern = String::with_capacity(query.len() + 2);
+    pattern.push('%');
+    for ch in query.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
+}
+
 fn parse_dt(s: String) -> rusqlite::Result<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(&s)
         .map(|dt| dt.with_timezone(&chrono::Utc))
@@ -753,6 +784,94 @@ mod tests {
             model_used: None,
             provider_id: None,
         }
+    }
+
+    fn make_named_character(db: &Db, name: &str) -> Character {
+        CharacterService::new(db.clone())
+            .create(&NewCharacter {
+                name: name.to_string(),
+                role: None,
+                personality: None,
+                system_prompt: None,
+                greeting: None,
+            })
+            .expect("create character")
+    }
+
+    fn new_session(chat: &ChatService, character_id: Uuid, title: &str) -> ChatSession {
+        chat.create_session(
+            &NewChatSession {
+                character_id,
+                title: Some(title.to_string()),
+            },
+            None,
+        )
+        .expect("create session")
+    }
+
+    #[test]
+    fn list_sessions_pages_without_repeating_rows() {
+        let db = test_db();
+        let character = make_character(&db, None);
+        let chat = ChatService::new(db);
+        for i in 0..3 {
+            new_session(&chat, character.id, &format!("Session {i}"));
+        }
+
+        let first = chat.list_sessions(None, None, 2, 0).unwrap();
+        let second = chat.list_sessions(None, None, 2, 2).unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(second.len(), 1);
+
+        let mut ids: Vec<_> = first
+            .iter()
+            .chain(&second)
+            .map(|s| s.session_id)
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 3, "pages must not repeat a session");
+    }
+
+    #[test]
+    fn list_sessions_searches_title_and_character_name() {
+        let db = test_db();
+        let chat = ChatService::new(db.clone());
+        // `make_character` names its character "Luna".
+        new_session(&chat, make_character(&db, None).id, "Dragon hunt");
+        new_session(&chat, make_named_character(&db, "Borgnine").id, "Tea party");
+
+        let hits = chat.list_sessions(None, Some("dragon"), 50, 0).unwrap();
+        assert_eq!(hits.len(), 1, "matches on title, case-insensitively");
+        assert_eq!(hits[0].title.as_deref(), Some("Dragon hunt"));
+
+        let hits = chat.list_sessions(None, Some("borg"), 50, 0).unwrap();
+        assert_eq!(hits.len(), 1, "matches on character name");
+        assert_eq!(hits[0].character_name, "Borgnine");
+
+        assert_eq!(
+            chat.list_sessions(None, Some("   "), 50, 0).unwrap().len(),
+            2,
+            "a blank query is not a filter"
+        );
+        assert!(chat
+            .list_sessions(None, Some("nonexistent"), 50, 0)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn list_sessions_search_treats_wildcards_literally() {
+        let db = test_db();
+        let character = make_character(&db, None);
+        let chat = ChatService::new(db);
+        new_session(&chat, character.id, "100% mine");
+        new_session(&chat, character.id, "plain");
+
+        // Unescaped, this pattern would match every row.
+        let hits = chat.list_sessions(None, Some("%"), 50, 0).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title.as_deref(), Some("100% mine"));
     }
 
     #[test]

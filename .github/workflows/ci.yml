@@ -18,6 +18,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Cheapest gate, and it compiles nothing — so no toolchain cache here.
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Rustfmt
+        run: cargo fmt --all --check
+
   server:
     name: Test & lint (server)
     runs-on: ubuntu-latest

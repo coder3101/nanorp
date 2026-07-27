@@ -9,6 +9,12 @@ use leptos::wasm_bindgen::JsCast;
 use leptos_router::components::A;
 use uuid::Uuid;
 
+/// Conversations per request, and the step size of "load more".
+const PAGE_SIZE: u32 = 30;
+
+/// How long typing has to settle before a search reaches the server.
+const SEARCH_DEBOUNCE_MS: u64 = 250;
+
 #[component]
 pub fn Sidebar(
     #[prop(optional)] on_navigate: Option<Callback<()>>,
@@ -16,47 +22,120 @@ pub fn Sidebar(
 ) -> impl IntoView {
     let toast = use_toast();
 
-    // Bumped to force the list to refetch after a deletion.
+    // The pages loaded so far, newest first.
+    let chats = RwSignal::new(Vec::<ChatSummary>::new());
+    let load_error = RwSignal::new(None::<String>);
+    let loading = RwSignal::new(false);
+    // The last response filled the page it asked for, so assume there's more.
+    let has_more = RwSignal::new(false);
+    // Each request claims the next id and a response carrying a stale one is
+    // discarded, so a slow early search can't land on top of a later one.
+    let request_id = StoredValue::new(0u32);
+    // Rows *returned* so far, which is where the next page starts. Counting the
+    // rows we kept instead would stall if a whole page were deduped away.
+    let next_offset = StoredValue::new(0u32);
+
+    let query = RwSignal::new(String::new());
+    // `query` once typing settles — this is what actually gets sent.
+    let applied_query = RwSignal::new(String::new());
+
+    // Bumped to force a refresh: after a deletion, or from the error retry.
     let refetch = RwSignal::new(0u32);
 
-    // Reload the chat list whenever the active session changes (covers newly
-    // created sessions and updated previews on send) or after a deletion.
-    let sessions = LocalResource::new(move || {
+    let fetch = move |offset: u32, limit: u32, replace: bool| {
+        let id = request_id.get_value() + 1;
+        request_id.set_value(id);
+        loading.set(true);
+
+        let search = applied_query.get_untracked();
+        let search = (!search.is_empty()).then_some(search);
+
+        leptos::task::spawn_local(async move {
+            let result = list_chat_sessions(None, search, limit, offset).await;
+            if request_id.get_value() != id {
+                return;
+            }
+            loading.set(false);
+            match result {
+                Ok(page) => {
+                    load_error.set(None);
+                    has_more.set(page.len() as u32 == limit);
+                    if replace {
+                        next_offset.set_value(page.len() as u32);
+                        chats.set(page);
+                    } else {
+                        next_offset.update_value(|o| *o += page.len() as u32);
+                        chats.update(|list| {
+                            for chat in page {
+                                // Rows shift position as `updated_at` changes,
+                                // so an offset page can hand back a row we
+                                // already hold — and `For` needs unique keys.
+                                if !list.iter().any(|c| c.session_id == chat.session_id) {
+                                    list.push(chat);
+                                }
+                            }
+                        });
+                    }
+                }
+                Err(e) => load_error.set(Some(e.to_string())),
+            }
+        });
+    };
+
+    // Re-request as many rows as are already on screen instead of collapsing to
+    // the first page, so a refresh doesn't undo the user's scrolling.
+    let reload = move || {
+        let loaded = chats.get_untracked().len() as u32;
+        fetch(0, loaded.max(PAGE_SIZE), true);
+    };
+
+    // Initial load, then whenever the active session changes (a new
+    // conversation has to appear, and previews and ordering shift), a search
+    // settles, or something asks for a refresh.
+    Effect::new(move |_| {
         let _ = current_session_id.get();
+        let _ = applied_query.get();
         let _ = refetch.get();
-        async move {
-            list_chat_sessions(None, 100, 0)
-                .await
-                .map_err(|e| e.to_string())
-        }
-    });
-    let load_error = Signal::derive(move || sessions.get().and_then(|r| r.err()));
-    let all_chats = Signal::derive(move || {
-        sessions.get().and_then(|r| r.ok()).unwrap_or_default() as Vec<ChatSummary>
+        reload();
     });
 
-    // Client-side filter over the loaded conversations.
-    let query = RwSignal::new(String::new());
-    let chats = Signal::derive(move || {
-        let q = query.get().trim().to_lowercase();
-        let list = all_chats.get();
-        if q.is_empty() {
-            return list;
+    let load_more = Callback::new(move |_| {
+        if loading.get_untracked() || !has_more.get_untracked() {
+            return;
         }
-        list.into_iter()
-            .filter(|c| {
-                c.character_name.to_lowercase().contains(&q)
-                    || c.title
-                        .as_deref()
-                        .is_some_and(|t| t.to_lowercase().contains(&q))
-                    || c.last_message
-                        .as_deref()
-                        .is_some_and(|m| m.to_lowercase().contains(&q))
-            })
-            .collect()
+        fetch(next_offset.get_value(), PAGE_SIZE, false);
     });
+
+    // Debounced so a search doesn't fire a request per keystroke.
+    let debounce = StoredValue::new_local(None::<leptos::leptos_dom::helpers::TimeoutHandle>);
+    let on_search_input = move |ev: leptos::ev::Event| {
+        let input = ev
+            .target()
+            .unwrap()
+            .unchecked_into::<leptos::web_sys::HtmlInputElement>();
+        query.set(input.value());
+
+        if let Some(handle) = debounce.get_value() {
+            handle.clear();
+        }
+        debounce.set_value(
+            leptos::leptos_dom::helpers::set_timeout_with_handle(
+                move || applied_query.set(query.get_untracked().trim().to_string()),
+                std::time::Duration::from_millis(SEARCH_DEBOUNCE_MS),
+            )
+            .ok(),
+        );
+    };
+
+    // Keep the box mounted while a search is active even if it matched nothing,
+    // otherwise there'd be no way to clear it.
+    let show_search =
+        Signal::derive(move || !chats.get().is_empty() || !query.get().trim().is_empty());
+
     let empty_text = Signal::derive(move || {
-        if query.get().trim().is_empty() {
+        if loading.get() {
+            "Loading conversations…".to_string()
+        } else if query.get().trim().is_empty() {
             "No conversations yet. Select a character to start chatting.".to_string()
         } else {
             "No conversations match your search.".to_string()
@@ -114,8 +193,9 @@ pub fn Sidebar(
                 </A>
             </div>
 
-            // Search over conversations (shown once there's anything to filter).
-            <Show when=move || !all_chats.get().is_empty()>
+            // Searches every conversation on the server, not just the pages
+            // already loaded.
+            <Show when=move || show_search.get()>
                 <div class="px-3 pb-2">
                     <div class="relative">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
@@ -132,10 +212,7 @@ pub fn Sidebar(
                             placeholder="Search chats..."
                             aria-label="Search conversations"
                             prop:value=move || query.get()
-                            on:input=move |ev| {
-                                let input = ev.target().unwrap().unchecked_into::<leptos::web_sys::HtmlInputElement>();
-                                query.set(input.value());
-                            }
+                            on:input=on_search_input
                         />
                     </div>
                 </div>
@@ -166,6 +243,9 @@ pub fn Sidebar(
                         on_delete=on_delete
                         chats=chats
                         empty_text=empty_text
+                        has_more=has_more
+                        loading=loading
+                        on_load_more=load_more
                     />
                 </Show>
             </div>

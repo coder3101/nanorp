@@ -48,9 +48,13 @@ pub async fn get_chat_session(id: Uuid) -> Result<Option<ChatSession>, ServerFnE
         .map_err(|e| ServerFnError::new(format!("Failed to load session: {e}")))
 }
 
+/// One newest-first page of conversations. `query` searches character names,
+/// session titles, and message previews across *all* sessions, not just the
+/// page the client currently holds.
 #[server(ListChatSessions, "/api")]
 pub async fn list_chat_sessions(
     character_id: Option<Uuid>,
+    query: Option<String>,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<ChatSummary>, ServerFnError> {
@@ -60,7 +64,7 @@ pub async fn list_chat_sessions(
     let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
     tokio::task::spawn_blocking(move || {
-        ChatService::new(db).list_sessions(character_id, limit, offset)
+        ChatService::new(db).list_sessions(character_id, query.as_deref(), limit, offset)
     })
     .await
     .map_err(|e| ServerFnError::new(format!("Task failed: {e}")))?

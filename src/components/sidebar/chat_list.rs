@@ -1,6 +1,7 @@
 use crate::components::ui::scroll_area::ScrollArea;
 use crate::models::chat::ChatSummary;
 use leptos::callback::Callable;
+use leptos::html;
 use leptos::prelude::*;
 use leptos_router::components::A;
 use uuid::Uuid;
@@ -38,9 +39,35 @@ pub fn ChatList(
     /// Message shown when the list is empty.
     #[prop(optional, into)]
     empty_text: MaybeProp<String>,
+    /// Whether another page exists, which shows the footer affordance.
+    #[prop(optional, into)]
+    has_more: Signal<bool>,
+    /// True while a page is in flight, so scrolling can't pile up requests.
+    #[prop(optional, into)]
+    loading: Signal<bool>,
+    /// Asks the parent for the next page.
+    #[prop(optional)]
+    on_load_more: Option<Callback<()>>,
 ) -> impl IntoView {
+    let scroll_ref = NodeRef::<html::Div>::new();
+
+    // Fetch the next page a little before the list bottoms out, so scrolling
+    // feels continuous instead of stopping at a button.
+    let on_scroll = Callback::new(move |_: ()| {
+        let Some(cb) = on_load_more else { return };
+        if !has_more.get_untracked() || loading.get_untracked() {
+            return;
+        }
+        if let Some(el) = scroll_ref.get_untracked() {
+            let remaining = el.scroll_height() - el.scroll_top() - el.client_height();
+            if remaining < 240 {
+                cb.run(());
+            }
+        }
+    });
+
     view! {
-        <ScrollArea class="flex-1 h-full">
+        <ScrollArea class="flex-1 h-full" node_ref=scroll_ref on_scroll=on_scroll>
             <Show
                 when=move || !chats.get().is_empty()
                 fallback=move || view! {
@@ -59,6 +86,34 @@ pub fn ChatList(
                     >
                         <ChatRow chat=chat current_session_id=current_session_id on_select=on_select on_delete=on_delete />
                     </For>
+
+                    // Scrolling normally triggers the next page, but keep the
+                    // button: it's the keyboard path, and it's the only way in
+                    // if the list somehow doesn't overflow.
+                    <Show when=move || has_more.get() || loading.get()>
+                        <div class="py-2 text-center">
+                            <Show
+                                when=move || !loading.get()
+                                fallback=|| view! {
+                                    <span class="text-xs text-muted-foreground">"Loading…"</span>
+                                }
+                            >
+                                <button
+                                    class="inline-flex h-7 items-center rounded-md border border-input bg-background \
+                                           px-2.5 text-xs font-medium text-muted-foreground shadow-sm \
+                                           transition-colors hover:bg-accent hover:text-foreground \
+                                           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                    on:click=move |_| {
+                                        if let Some(cb) = on_load_more {
+                                            cb.run(());
+                                        }
+                                    }
+                                >
+                                    "Load more"
+                                </button>
+                            </Show>
+                        </div>
+                    </Show>
                 </div>
             </Show>
         </ScrollArea>

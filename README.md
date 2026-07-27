@@ -141,6 +141,7 @@ cargo leptos build --release            # production build into target/
 Tests and lints, the same way CI runs them:
 
 ```bash
+cargo fmt --all --check
 cargo test --features ssr --no-default-features
 cargo clippy --all-targets --features ssr --no-default-features -- -D warnings
 cargo clippy --lib --target wasm32-unknown-unknown \
@@ -166,7 +167,8 @@ In development, app data lives in `~/.config/nanorp/` (macOS:
 ## Contributing
 
 Issues and pull requests are welcome. Keep changes focused, make sure
-`cargo test` and `cargo clippy` pass, and match the surrounding style.
+`cargo fmt`, `cargo test`, and `cargo clippy` pass, and match the surrounding
+style.
 
 ## License
 

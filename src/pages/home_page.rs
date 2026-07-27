@@ -74,6 +74,11 @@ pub fn HomePage() -> impl IntoView {
                         }.into_any()
                     />
                 </div>
+
+                // Baked in at compile time, so it always matches the running build.
+                <p class="mt-10 text-xs text-muted-foreground">
+                    {concat!("v", env!("CARGO_PKG_VERSION"))}
+                </p>
             </div>
         </div>
     }

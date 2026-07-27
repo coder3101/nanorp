@@ -101,7 +101,10 @@ impl Db {
 /// compile time. To change the schema, add a new numbered file there and
 /// include it at the end of this list — never edit an existing script after
 /// release (write ALTER TABLE / backfill statements in the new file instead).
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/001_initial_schema.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/001_initial_schema.sql"),
+    include_str!("../migrations/002_session_list_indexes.sql"),
+];
 
 #[cfg(test)]
 mod tests {
