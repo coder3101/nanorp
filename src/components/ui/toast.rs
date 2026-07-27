@@ -101,7 +101,7 @@ pub fn Toaster() -> impl IntoView {
 
     view! {
         <div
-            class="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 w-full max-w-[420px] pointer-events-none"
+            class="fixed top-4 right-4 z-[100] flex flex-col gap-2 w-full max-w-[420px] pointer-events-none"
             aria-live="polite"
         >
             <For
@@ -145,7 +145,7 @@ fn ToastItem(toast: ToastData) -> impl IntoView {
             class=format!(
                 "group pointer-events-auto relative flex w-full items-center justify-between \
                  space-x-2 overflow-hidden rounded-md border p-4 pr-8 shadow-lg \
-                 transition-all animate-in slide-in-from-bottom fade-in {}",
+                 transition-all animate-slide-in-from-top {}",
                 variant_classes
             )
         >
