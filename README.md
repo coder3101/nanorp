@@ -15,8 +15,6 @@ Bring your own characters. Bring your own models. Everything stays on your machi
 
 </div>
 
-## Demo
-
 https://github.com/user-attachments/assets/5b9d48af-aff3-41fa-b20f-04613df05a29
 
 ## Contents
