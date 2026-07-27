@@ -1,3 +1,4 @@
+use crate::server::update::check_for_update;
 use leptos::prelude::*;
 use leptos_router::components::A;
 
@@ -5,6 +6,8 @@ use leptos_router::components::A;
 /// toward starting a chat or managing characters.
 #[component]
 pub fn HomePage() -> impl IntoView {
+    let update_check = Resource::new(|| (), |_| check_for_update());
+
     view! {
         <div class="flex h-full flex-col overflow-y-auto scroll-area p-6">
             <div class="mx-auto my-auto flex max-w-xl flex-col items-center py-4 text-center">
@@ -79,6 +82,39 @@ pub fn HomePage() -> impl IntoView {
                 <p class="mt-10 text-xs text-muted-foreground">
                     {concat!("v", env!("CARGO_PKG_VERSION"))}
                 </p>
+
+                // Update check — shown below the version when a newer release exists.
+                <Suspense fallback=|| ()>
+                    {move || {
+                        update_check.get().map(|result| {
+                            match result {
+                                Ok(Some(info)) if info.update_available => {
+                                    view! {
+                                        <a
+                                            href={info.release_url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            class="mt-2 inline-flex items-center gap-1.5 rounded-md border \
+                                                   border-primary/20 bg-primary/5 px-3 py-1.5 text-xs \
+                                                   text-primary no-underline transition-colors \
+                                                   hover:bg-primary/10"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                                                 viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                                <polyline points="7 10 12 15 17 10"/>
+                                                <line x1="12" x2="12" y1="15" y2="3"/>
+                                            </svg>
+                                            {format!("{} available", info.latest_tag)}
+                                        </a>
+                                    }.into_any()
+                                }
+                                _ => view! { <span/> }.into_any(),
+                            }
+                        })
+                    }}
+                </Suspense>
             </div>
         </div>
     }
