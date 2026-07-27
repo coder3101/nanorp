@@ -271,38 +271,10 @@ pub fn ChatPage() -> impl IntoView {
     view! {
         <Show
             when=move || has_session.get()
-            fallback=move || view! {
-                <div class="flex h-full flex-col overflow-y-auto scroll-area p-6">
-                    <div class="mx-auto my-auto flex max-w-md flex-col items-center py-4 text-center">
-                        <div class="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-lg">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24"
-                                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
-                            </svg>
-                        </div>
-                        <h2 class="text-2xl font-semibold tracking-tight">"Start a new chat"</h2>
-                        <p class="mt-2 text-sm text-muted-foreground">
-                            "Pick a character to roleplay with. Each one brings its own personality and voice."
-                        </p>
-                        <leptos_router::components::A
-                            href="/characters"
-                            attr:class="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-lg \
-                                   bg-primary px-5 text-sm font-medium text-primary-foreground shadow \
-                                   transition-colors hover:bg-primary/90 focus-visible:outline-none \
-                                   focus-visible:ring-2 focus-visible:ring-ring no-underline"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
-                                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
-                                <circle cx="9" cy="7" r="4"/>
-                                <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
-                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-                            </svg>
-                            "Browse characters"
-                        </leptos_router::components::A>
-                    </div>
-                </div>
-            }
+            // Reachable only for a URL with no usable session id (e.g. a
+            // malformed /chat/<id>); send those to the character list rather
+            // than showing an interstitial.
+            fallback=|| view! { <leptos_router::components::Redirect path="/characters"/> }
         >
             <Show
                 when=move || load_error.get().is_none()
@@ -331,7 +303,7 @@ pub fn ChatPage() -> impl IntoView {
                                 "Try again"
                             </button>
                             <leptos_router::components::A
-                                href="/chat"
+                                href="/characters"
                                 attr:class="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary \
                                        px-4 text-sm font-medium text-primary-foreground shadow transition-colors \
                                        hover:bg-primary/90 no-underline"

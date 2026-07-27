@@ -71,7 +71,7 @@ pub fn Sidebar(
                     toast.success("Conversation deleted");
                     if current_session_id.get_untracked() == Some(session_id) {
                         let navigate = leptos_router::hooks::use_navigate();
-                        navigate("/chat", Default::default());
+                        navigate("/characters", Default::default());
                     }
                     refetch.update(|v| *v += 1);
                 }
@@ -83,18 +83,15 @@ pub fn Sidebar(
     view! {
         <div class="flex h-full flex-col border-r border-border bg-muted/40">
             <A href="/" attr:class="flex h-14 items-center gap-2 border-b border-border px-4 no-underline">
-                <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-sm">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24"
-                         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
-                    </svg>
-                </span>
+                // Simplified mark, not the full logo: at nav size the detailed
+                // artwork is illegible.
+                <img src="/mark.png" alt="" class="h-5 w-auto shrink-0" />
                 <h1 class="font-semibold text-lg tracking-tight text-foreground">"NanoRP"</h1>
             </A>
 
             <div class="p-3">
                 <A
-                    href="/chat"
+                    href="/characters"
                     attr:class="inline-flex w-full items-center justify-center gap-2 rounded-lg text-sm font-medium \
                            transition-colors focus-visible:outline-none focus-visible:ring-2 \
                            focus-visible:ring-ring bg-primary text-primary-foreground shadow \

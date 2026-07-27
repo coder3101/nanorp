@@ -48,7 +48,6 @@ pub fn App() -> impl IntoView {
                 }>
                     <ParentRoute path=StaticSegment("") view=MainLayout>
                         <Route path=StaticSegment("") view=HomePage/>
-                        <Route path=StaticSegment("chat") view=ChatPage/>
                         <Route path=(StaticSegment("chat"), ParamSegment("id")) view=ChatPage/>
                         <Route path=StaticSegment("characters") view=CharactersPage/>
                         <Route path=StaticSegment("settings") view=SettingsPage/>

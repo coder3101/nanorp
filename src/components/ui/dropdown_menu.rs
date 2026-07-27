@@ -269,7 +269,7 @@ pub fn DropdownMenuItem(
                 px-2 py-1.5 text-sm outline-none transition-colors \
                 hover:bg-accent hover:text-accent-foreground \
                 focus:bg-accent focus:text-accent-foreground \
-                data-[disabled]:pointer-events-none data-[disabled]:opacity-50";
+                data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50";
     let classes = move || {
         let extra = class.get().unwrap_or_default();
         format!("{} {}", base, extra)
@@ -282,7 +282,9 @@ pub fn DropdownMenuItem(
             tabindex="0"
             on:click=move |_| select()
             on:keydown=on_keydown
-            data-disabled=move || disabled.get().unwrap_or(false).to_string()
+            // Omitted entirely when enabled: `data-disabled="false"` would still
+            // match an attribute-presence selector and grey the item out.
+            data-disabled=move || disabled.get().unwrap_or(false).then_some("true")
         >
             {children()}
         </div>

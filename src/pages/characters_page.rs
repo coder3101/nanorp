@@ -747,9 +747,13 @@ fn CharacterCard(
     let for_export = character.clone();
 
     view! {
-        <div class="group flex flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+        // No `overflow-hidden` here: the actions dropdown opens downward from the
+        // bottom edge of this card and would be clipped away. `focus-within:z-20`
+        // lifts the card (and the open menu) above its neighbours, which matters
+        // because the hover transform makes this card its own stacking context.
+        <div class="group relative flex flex-col rounded-xl border border-border bg-card text-card-foreground shadow-sm transition-all focus-within:z-20 hover:-translate-y-0.5 hover:shadow-md">
             // Banner + avatar
-            <div class="relative h-16 bg-gradient-to-r from-muted to-accent">
+            <div class="relative h-16 rounded-t-xl bg-gradient-to-r from-muted to-accent">
                 {if has_avatar {
                     view! {
                         <img
@@ -848,7 +852,7 @@ fn CharactersEmpty(
 ) -> impl IntoView {
     view! {
         <div class="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border py-20 text-center">
-            <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-lg">
+            <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-lg">
                 <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
             </div>
             <h3 class="text-lg font-semibold">"Create your first character"</h3>

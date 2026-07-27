@@ -9,12 +9,7 @@ pub fn HomePage() -> impl IntoView {
         <div class="flex h-full flex-col overflow-y-auto scroll-area p-6">
             <div class="mx-auto my-auto flex max-w-xl flex-col items-center py-4 text-center">
                 // Logo mark
-                <div class="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-lg">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24"
-                         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
-                    </svg>
-                </div>
+                <img src="/logo.png" alt="" class="mb-6 h-20 w-20 rounded-2xl object-contain" />
 
                 <h1 class="text-4xl font-bold tracking-tight">"Welcome to NanoRP"</h1>
                 <p class="mt-3 max-w-md text-base text-muted-foreground">
@@ -24,24 +19,11 @@ pub fn HomePage() -> impl IntoView {
 
                 <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
                     <A
-                        href="/chat"
+                        href="/characters"
                         attr:class="inline-flex h-11 items-center justify-center gap-2 rounded-lg \
                                bg-primary px-5 text-sm font-medium text-primary-foreground shadow \
                                transition-colors hover:bg-primary/90 focus-visible:outline-none \
                                focus-visible:ring-2 focus-visible:ring-ring no-underline"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
-                             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
-                        </svg>
-                        "Start chatting"
-                    </A>
-                    <A
-                        href="/characters"
-                        attr:class="inline-flex h-11 items-center justify-center gap-2 rounded-lg \
-                               border border-input bg-background px-5 text-sm font-medium shadow-sm \
-                               transition-colors hover:bg-accent hover:text-accent-foreground \
-                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring no-underline"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
                              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -50,7 +32,21 @@ pub fn HomePage() -> impl IntoView {
                             <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
                             <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                         </svg>
-                        "Manage characters"
+                        "Start chatting"
+                    </A>
+                    <A
+                        href="/settings"
+                        attr:class="inline-flex h-11 items-center justify-center gap-2 rounded-lg \
+                               border border-input bg-background px-5 text-sm font-medium shadow-sm \
+                               transition-colors hover:bg-accent hover:text-accent-foreground \
+                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring no-underline"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
+                             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                        "Settings"
                     </A>
                 </div>
 

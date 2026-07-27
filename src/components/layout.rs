@@ -62,6 +62,7 @@ pub fn MainLayout() -> impl IntoView {
                             <line x1="4" x2="20" y1="18" y2="18"/>
                         </svg>
                     </button>
+                    <img src="/mark.png" alt="" class="h-5 w-auto shrink-0" />
                     <span class="font-semibold">"NanoRP"</span>
                 </header>
 
