@@ -383,20 +383,40 @@ fn convert_heif_to_jpeg(
             let width = img_clone.natural_width();
             let height = img_clone.natural_height();
 
+            // Downscale very large images (e.g. 12MP iPhone photos) to max
+            // 2048px on the longest side to keep payload reasonable.
+            let max_dim: u32 = 2048;
+            let (out_w, out_h) = if width > max_dim || height > max_dim {
+                let scale = max_dim as f64 / width.max(height) as f64;
+                (
+                    (width as f64 * scale) as u32,
+                    (height as f64 * scale) as u32,
+                )
+            } else {
+                (width, height)
+            };
+
             let document = leptos::prelude::document();
             let canvas: web_sys::HtmlCanvasElement =
                 document.create_element("canvas").unwrap().unchecked_into();
-            canvas.set_width(width);
-            canvas.set_height(height);
+            canvas.set_width(out_w);
+            canvas.set_height(out_h);
 
             let ctx: web_sys::CanvasRenderingContext2d =
                 canvas.get_context("2d").unwrap().unwrap().unchecked_into();
-            ctx.draw_image_with_html_image_element(&img_clone, 0.0, 0.0)
-                .unwrap();
+            ctx.draw_image_with_html_image_element_and_dw_and_dh(
+                &img_clone,
+                0.0,
+                0.0,
+                out_w as f64,
+                out_h as f64,
+            )
+            .unwrap();
 
-            // Export as JPEG (quality 0.92)
+            // Export as JPEG with quality 0.85
+            let quality = leptos::wasm_bindgen::JsValue::from_f64(0.85);
             let data_url = canvas
-                .to_data_url_with_type("image/jpeg")
+                .to_data_url_with_type_and_encoder_options("image/jpeg", &quality)
                 .unwrap_or_default();
             let base64 = data_url.split(',').nth(1).unwrap_or("").to_string();
             let byte_len = base64.len() * 3 / 4; // approximate decoded size
