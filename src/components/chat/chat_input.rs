@@ -158,7 +158,7 @@ pub fn ChatInput(
                             transition-colors focus-within:ring-2 focus-within:ring-ring">
                     <input
                         type="file"
-                        accept="image/*"
+                        accept="image/*,.heic,.heif"
                         multiple=true
                         class="hidden"
                         node_ref=file_input_ref
@@ -249,13 +249,33 @@ pub fn ChatInput(
 }
 
 #[cfg(feature = "hydrate")]
+/// Returns `true` if the MIME type is HEIF/HEIC (iPhone camera format) and
+/// needs conversion to JPEG before upload.
+fn needs_heif_conversion(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "image/heic" | "image/heif" | "image/heic-sequence" | "image/heif-sequence"
+    )
+}
+
+#[cfg(feature = "hydrate")]
 fn process_file(
     file: web_sys::File,
     pending_images: &RwSignal<Vec<PendingImage>>,
     toast: &crate::components::ui::toast::UseToast,
 ) {
     let content_type = file.type_();
-    if !content_type.starts_with("image/") {
+
+    // Some browsers report an empty MIME type for HEIC files; detect by
+    // extension in that case.
+    let is_heif_by_ext = {
+        let lower = file.name().to_lowercase();
+        lower.ends_with(".heic") || lower.ends_with(".heif")
+    };
+    let is_heif =
+        needs_heif_conversion(&content_type) || (content_type.is_empty() && is_heif_by_ext);
+
+    if !content_type.starts_with("image/") && !is_heif {
         toast.warning(format!(
             "\"{}\" isn't an image — only images can be attached",
             file.name()
@@ -277,7 +297,24 @@ fn process_file(
         return;
     }
 
+    if is_heif {
+        // Convert HEIF/HEIC → JPEG via Canvas. Safari natively decodes HEIC;
+        // other browsers may not, in which case the image load will fail and
+        // the user will see an error toast.
+        convert_heif_to_jpeg(file, pending_images, toast);
+    } else {
+        read_file_directly(file, content_type, pending_images);
+    }
+}
+
+#[cfg(feature = "hydrate")]
+fn read_file_directly(
+    file: web_sys::File,
+    content_type: String,
+    pending_images: &RwSignal<Vec<PendingImage>>,
+) {
     let name = file.name();
+    let size = file.size() as u64;
     let pending = *pending_images;
 
     let reader = leptos::web_sys::FileReader::new().unwrap();
@@ -289,8 +326,6 @@ fn process_file(
             let data_url = result.as_string().unwrap();
             let base64 = data_url.split(',').nth(1).unwrap_or("").to_string();
             pending.update(|imgs| {
-                // Re-checked here because reads complete asynchronously, so a
-                // multi-file selection could otherwise overshoot the cap.
                 if imgs.len() < MAX_IMAGES_PER_MESSAGE {
                     imgs.push(PendingImage {
                         id: Uuid::new_v4(),
@@ -306,6 +341,106 @@ fn process_file(
     reader.set_onload(Some(onload.as_ref().unchecked_ref()));
     onload.forget();
     reader.read_as_data_url(&file).unwrap();
+}
+
+#[cfg(feature = "hydrate")]
+fn convert_heif_to_jpeg(
+    file: web_sys::File,
+    pending_images: &RwSignal<Vec<PendingImage>>,
+    toast: &crate::components::ui::toast::UseToast,
+) {
+    let pending = *pending_images;
+    let toast = toast.clone();
+    let name = file.name();
+
+    // Create an object URL for the file so the browser's native image decoder
+    // can handle it (Safari decodes HEIC natively).
+    let blob: &web_sys::Blob = file.as_ref();
+    let obj_url = web_sys::Url::create_object_url_with_blob(blob).unwrap();
+
+    let document = leptos::prelude::document();
+    let img: web_sys::HtmlImageElement = document.create_element("img").unwrap().unchecked_into();
+
+    let obj_url_for_cleanup = obj_url.clone();
+    let name_for_err = name.clone();
+    let toast_for_err = toast.clone();
+
+    // On error — the browser can't decode this HEIC file.
+    let onerror = leptos::wasm_bindgen::prelude::Closure::wrap(Box::new(
+        move |_: leptos::web_sys::Event| {
+            let _ = web_sys::Url::revoke_object_url(&obj_url_for_cleanup);
+            toast_for_err.warning(format!(
+            "Could not decode \"{name_for_err}\". Your browser may not support HEIC — try converting to JPEG first."
+        ));
+        },
+    ) as Box<dyn FnMut(_)>);
+
+    let img_clone = img.clone();
+    let obj_url_for_load = obj_url.clone();
+
+    let onload =
+        leptos::wasm_bindgen::prelude::Closure::wrap(Box::new(move |_: leptos::web_sys::Event| {
+            let width = img_clone.natural_width();
+            let height = img_clone.natural_height();
+
+            // Downscale very large images (e.g. 12MP iPhone photos) to max
+            // 2048px on the longest side to keep payload reasonable.
+            let max_dim: u32 = 2048;
+            let (out_w, out_h) = if width > max_dim || height > max_dim {
+                let scale = max_dim as f64 / width.max(height) as f64;
+                (
+                    (width as f64 * scale) as u32,
+                    (height as f64 * scale) as u32,
+                )
+            } else {
+                (width, height)
+            };
+
+            let document = leptos::prelude::document();
+            let canvas: web_sys::HtmlCanvasElement =
+                document.create_element("canvas").unwrap().unchecked_into();
+            canvas.set_width(out_w);
+            canvas.set_height(out_h);
+
+            let ctx: web_sys::CanvasRenderingContext2d =
+                canvas.get_context("2d").unwrap().unwrap().unchecked_into();
+            ctx.draw_image_with_html_image_element_and_dw_and_dh(
+                &img_clone,
+                0.0,
+                0.0,
+                out_w as f64,
+                out_h as f64,
+            )
+            .unwrap();
+
+            // Export as JPEG with quality 0.85
+            let quality = leptos::wasm_bindgen::JsValue::from_f64(0.85);
+            let data_url = canvas
+                .to_data_url_with_type_and_encoder_options("image/jpeg", &quality)
+                .unwrap_or_default();
+            let base64 = data_url.split(',').nth(1).unwrap_or("").to_string();
+            let byte_len = base64.len() * 3 / 4; // approximate decoded size
+
+            let _ = web_sys::Url::revoke_object_url(&obj_url_for_load);
+
+            pending.update(|imgs| {
+                if imgs.len() < MAX_IMAGES_PER_MESSAGE {
+                    imgs.push(PendingImage {
+                        id: Uuid::new_v4(),
+                        data: base64,
+                        content_type: "image/jpeg".to_string(),
+                        original_name: Some(name.clone()),
+                        file_size: byte_len as u64,
+                    });
+                }
+            });
+        }) as Box<dyn FnMut(_)>);
+
+    img.set_onload(Some(onload.as_ref().unchecked_ref()));
+    img.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+    onload.forget();
+    onerror.forget();
+    img.set_src(&obj_url);
 }
 
 fn format_file_size(bytes: u64) -> String {

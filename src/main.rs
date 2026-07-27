@@ -1,6 +1,7 @@
 #[cfg(feature = "ssr")]
 #[tokio::main]
 async fn main() {
+    use axum::extract::DefaultBodyLimit;
     use axum::Router;
     use leptos::logging::log;
     use leptos::prelude::*;
@@ -44,6 +45,7 @@ async fn main() {
             },
         )
         .fallback(leptos_axum::file_and_error_handler(shell))
+        .layer(DefaultBodyLimit::max(20 * 1024 * 1024)) // 20 MB for image uploads
         .with_state(leptos_options);
 
     log!("listening on http://{}", &addr);
