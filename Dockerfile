@@ -84,7 +84,13 @@ ENV LEPTOS_OUTPUT_NAME=nanorp \
 # Runs as a dedicated non-root user. Named volumes inherit the ownership set
 # here on first use; for bind mounts, chown the host directory to uid 10001
 # (or override with `docker run --user`).
-RUN useradd --system --uid 10001 --user-group --home-dir /data --shell /usr/sbin/nologin nanorp \
+#
+# Not a `--system` account: uid 10001 sits above Debian's SYS_UID_MAX (999),
+# which makes useradd warn. A high, fixed uid is the point here — it avoids
+# colliding with host uids on bind mounts and satisfies runtimes that refuse
+# low uids — so the regular-user range is the correct one to allocate from.
+RUN useradd --uid 10001 --user-group --no-create-home --home-dir /data \
+        --shell /usr/sbin/nologin nanorp \
     && mkdir -p /data \
     && chown -R nanorp:nanorp /data
 VOLUME ["/data"]
