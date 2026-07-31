@@ -1,4 +1,5 @@
 use crate::components::avatar::{gradient as avatar_gradient, initial};
+use crate::components::chat::model_selector::ModelSelector;
 use crate::components::ui::classes::{BTN_DESTRUCTIVE, BTN_OUTLINE, BTN_PRIMARY, INPUT};
 use crate::components::ui::confirm::confirm;
 use crate::components::ui::dropdown_menu::{
@@ -10,8 +11,8 @@ use crate::components::ui::modal::Modal;
 use crate::components::ui::toast::{use_toast, ToastVariant};
 use crate::models::character::{Character, NewCharacter, UpdateCharacter};
 use crate::server::character::{
-    create_character, delete_character, list_characters, remove_character_avatar, update_character,
-    upload_character_avatar,
+    create_character, delete_character, generate_character, list_characters,
+    remove_character_avatar, update_character, upload_character_avatar,
 };
 use leptos::callback::Callable;
 use leptos::html;
@@ -88,6 +89,41 @@ pub fn CharactersPage() -> impl IntoView {
         String::new(),
     ));
 
+    // Generate-with-AI: a separate dialog. It is only surfaced once at least
+    // one provider is configured (the AI can't run otherwise).
+    let ai_open = RwSignal::new(false);
+    let ai_description = RwSignal::new(String::new());
+    let ai_provider = RwSignal::new(Option::<uuid::Uuid>::None);
+    let ai_model = RwSignal::new(Option::<String>::None);
+    let ai_generating = RwSignal::new(false);
+    let ai_error = RwSignal::new(Option::<String>::None);
+    let ai_success = RwSignal::new(Option::<String>::None);
+    // Monotonically-increasing token for the in-flight generation request. A
+    // request may only apply its result if its captured token still matches and
+    // the dialog is still open. Bumping it on open and on every new generate
+    // invalidates stale drafts, so closing the dialog or starting over safely
+    // discards an in-flight result instead of overwriting whatever form the
+    // user has navigated to.
+    let ai_request = RwSignal::new(0u64);
+
+    // Whether at least one LLM provider exists, which gates the "Generate with
+    // AI" entry point in the create dialog.
+    let providers_res = LocalResource::new(|| async move {
+        crate::server::provider::list_providers()
+            .await
+            .is_ok_and(|p| !p.is_empty())
+    });
+    let has_providers = Signal::derive(move || providers_res.get().unwrap_or(false));
+
+    let open_ai = Callback::new(move |_| {
+        // Invalidate any in-flight request from a previous session.
+        ai_request.update(|v| *v += 1);
+        ai_error.set(None);
+        ai_success.set(None);
+        ai_generating.set(false);
+        ai_open.set(true);
+    });
+
     let open_create = Callback::new(move |_| {
         editing_character.set(None);
         form_name.set(String::new());
@@ -100,6 +136,9 @@ pub fn CharactersPage() -> impl IntoView {
         existing_avatar.set(None);
         avatar_cleared.set(false);
         form_snapshot.set_value(Default::default());
+        ai_error.set(None);
+        ai_success.set(None);
+        ai_generating.set(false);
         dialog_open.set(true);
     });
 
@@ -248,6 +287,75 @@ pub fn CharactersPage() -> impl IntoView {
             dialog_open.set(false);
             editing_character.set(None);
             version.update(|v| *v += 1);
+        });
+    });
+
+    // Generate-with-AI: ask the chosen LLM to draft a character from the
+    // described situation, then drop the result into the reviewable form
+    // fields (the user saves or retries from there).
+    let toast_generate = toast.clone();
+    let generate_with_ai = Callback::new(move |_| {
+        let description = ai_description.get().trim().to_string();
+        if description.is_empty() {
+            ai_error.set(Some("Describe the character you want first.".to_string()));
+            return;
+        }
+        let (Some(provider_id), Some(model)) = (ai_provider.get(), ai_model.get()) else {
+            ai_error.set(Some("Choose a provider and model first.".to_string()));
+            return;
+        };
+
+        ai_error.set(None);
+        ai_success.set(None);
+        ai_generating.set(true);
+
+        // Invalidate any prior in-flight request, then capture this one's token.
+        ai_request.update(|v| *v += 1);
+        let token = ai_request.get_untracked();
+
+        let toast_generate = toast_generate.clone();
+        leptos::task::spawn_local(async move {
+            // Discard the result if a newer request superseded this one or the
+            // dialog was closed while it was in flight. This keeps a stale
+            // generation from overwriting form fields the user has since
+            // changed or a character they've moved on to.
+            let stale = move || ai_request.get_untracked() != token || !ai_open.get_untracked();
+
+            match generate_character(provider_id, model, description).await {
+                Ok(draft) => {
+                    if stale() {
+                        return;
+                    }
+                    form_name.set(draft.name.clone());
+                    form_role.set(draft.role.unwrap_or_default());
+                    form_personality.set(draft.personality.unwrap_or_default());
+                    form_system_prompt.set(draft.system_prompt.unwrap_or_default());
+                    form_greeting.set(draft.greeting.unwrap_or_default());
+                    name_error.set(None);
+                    // Reset the unsaved-changes snapshot so the generated draft
+                    // is treated as the clean baseline, not "changed" form data.
+                    form_snapshot.set_value((
+                        form_name.get_untracked(),
+                        form_role.get_untracked(),
+                        form_personality.get_untracked(),
+                        form_system_prompt.get_untracked(),
+                        form_greeting.get_untracked(),
+                    ));
+                    ai_success.set(Some(format!(
+                        "Draft ready: \"{}\". Review the fields below, then save or retry.",
+                        draft.name
+                    )));
+                    toast_generate.success(format!("Generated \"{}\"", draft.name));
+                    ai_generating.set(false);
+                }
+                Err(e) => {
+                    if stale() {
+                        return;
+                    }
+                    ai_error.set(Some(e.to_string()));
+                    ai_generating.set(false);
+                }
+            }
         });
     });
 
@@ -532,6 +640,20 @@ pub fn CharactersPage() -> impl IntoView {
                 </div>
 
                 <div class="space-y-4 p-6">
+                    // Entry point to the Generate-with-AI dialog. Only offered
+                    // when at least one provider is configured, and only when
+                    // creating a character (not editing).
+                    <Show when=move || !is_editing.get() && has_providers.get()>
+                        <button
+                            type="button"
+                            class="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-input bg-background px-4 py-3 text-sm font-medium text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            on:click=move |_| open_ai.run(())
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M19 3v4"/><path d="M21 5h-4"/></svg>
+                            "Generate with AI"
+                        </button>
+                    </Show>
+
                     <Field
                         label="Name"
                         for_id="char-name"
@@ -649,6 +771,127 @@ pub fn CharactersPage() -> impl IntoView {
                     <button class=BTN_DESTRUCTIVE on:click=move |_| do_delete.run(())>
                         "Delete"
                     </button>
+                </div>
+            </Modal>
+
+            // ---- Generate-with-AI dialog ----
+            // Its own popup so the create form stays focused on manual entry.
+            // The description, model picker, and generation lifecycle all live
+            // here; a successful draft is dropped into the create form.
+            <Modal
+                open=ai_open
+                label=Signal::derive(|| "Generate with AI".to_string())
+                class="w-full max-w-md p-0 sm:p-0"
+            >
+                <div class="flex items-start justify-between gap-4 border-b border-border p-5 sm:p-6">
+                    <div class="flex items-start gap-3">
+                        <span class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-sm">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M19 3v4"/><path d="M21 5h-4"/></svg>
+                        </span>
+                        <div class="min-w-0">
+                            <h2 class="text-base font-semibold">"Generate with AI"</h2>
+                            <p class="mt-0.5 text-xs text-muted-foreground">
+                                "Describe the character you want and let the model draft it. You can review and edit everything before saving."
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        class="-mr-1 -mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        aria-label="Close"
+                        on:click=move |_| ai_open.set(false)
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                    </button>
+                </div>
+
+                <div class="space-y-4 p-5 sm:p-6">
+                    <div class="space-y-1.5">
+                        <label class="text-sm font-medium" r#for="ai-description">"Describe your character"</label>
+                        <textarea
+                            id="ai-description"
+                            rows="4"
+                            placeholder="e.g. A gruff retired ship captain who runs a dockside tavern and takes on odd jobs for {{user}}..."
+                            class=format!("{} min-h-[120px] resize-y leading-relaxed", INPUT)
+                            prop:value=move || ai_description.get()
+                            on:input=move |ev| {
+                                let input = ev.target().unwrap().unchecked_into::<leptos::web_sys::HtmlTextAreaElement>();
+                                ai_description.set(input.value());
+                            }
+                        ></textarea>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <span class="text-sm font-medium">"Model"</span>
+                        <ModelSelector selected_provider=ai_provider selected_model=ai_model />
+                    </div>
+
+                    <Show when=move || ai_error.get().is_some()>
+                        <div class="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mt-0.5 shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+                            <span>{move || ai_error.get().unwrap_or_default()}</span>
+                        </div>
+                    </Show>
+                    <Show when=move || ai_success.get().is_some()>
+                        <div class="flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-xs text-emerald-700 dark:text-emerald-400">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mt-0.5 shrink-0"><path d="M20 6 9 17l-5-5"/></svg>
+                            <span>{move || ai_success.get().unwrap_or_default()}</span>
+                        </div>
+                    </Show>
+                </div>
+
+                // Footer: Close always; the primary action switches from
+                // "Generate" to "Use these details" once a draft is ready, with
+                // "Regenerate" available alongside it. Column-stacked on mobile
+                // so the primary action sits on top (thumb-friendly).
+                <div class="flex flex-col-reverse gap-2 border-t border-border p-5 pt-4 sm:flex-row sm:items-center sm:justify-end sm:p-6 sm:pt-4">
+                    <button
+                        type="button"
+                        class=BTN_OUTLINE
+                        on:click=move |_| ai_open.set(false)
+                    >
+                        "Close"
+                    </button>
+
+                    <Show
+                        when=move || ai_success.get().is_some()
+                        fallback=move || view! {
+                            <button
+                                type="button"
+                                class=BTN_PRIMARY
+                                disabled=move || ai_generating.get()
+                                on:click=move |_| generate_with_ai.run(())
+                            >
+                                {move || if ai_generating.get() {
+                                    view! {
+                                        <svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                                        "Generating..."
+                                    }.into_any()
+                                } else {
+                                    view! {
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/><path d="M19 3v4"/><path d="M21 5h-4"/></svg>
+                                        "Generate character"
+                                    }.into_any()
+                                }}
+                            </button>
+                        }
+                    >
+                        <button
+                            type="button"
+                            class=BTN_OUTLINE
+                            on:click=move |_| generate_with_ai.run(())
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                            "Regenerate"
+                        </button>
+                        <button
+                            type="button"
+                            class=BTN_PRIMARY
+                            on:click=move |_| ai_open.set(false)
+                        >
+                            "Use these details"
+                        </button>
+                    </Show>
                 </div>
             </Modal>
         </div>

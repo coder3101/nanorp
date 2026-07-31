@@ -9,7 +9,7 @@ use std::pin::Pin;
 use crate::models::message::LlmMessage;
 use crate::models::provider::{ConnectionStatus, ModelInfo, ProviderType};
 use crate::models::settings::SamplingParams;
-use crate::providers::traits::{LlmProvider, StreamEvent};
+use crate::providers::traits::{strip_code_fence, LlmProvider, StreamEvent};
 
 pub struct OllamaProvider {
     client: reqwest::Client,
@@ -46,6 +46,9 @@ struct OllamaChatRequest {
     messages: Vec<OllamaChatMessage>,
     stream: bool,
     options: OllamaOptions,
+    /// JSON mode: when Some, Ollama is asked to reply with a single JSON value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -70,6 +73,15 @@ struct OllamaChatChunk {
     message: Option<OllamaChunkMessage>,
     #[serde(default)]
     done: bool,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// Non-streaming chat response (used by `chat_json`).
+#[derive(Deserialize)]
+struct OllamaChatResponse {
+    #[serde(default)]
+    message: Option<OllamaChunkMessage>,
     #[serde(default)]
     error: Option<String>,
 }
@@ -138,6 +150,7 @@ impl LlmProvider for OllamaProvider {
                 top_p: params.top_p,
                 num_predict: params.max_tokens,
             },
+            format: None,
         };
 
         let resp = self
@@ -219,6 +232,47 @@ impl LlmProvider for OllamaProvider {
         };
 
         Ok(Box::pin(stream))
+    }
+
+    async fn chat_json(
+        &self,
+        messages: Vec<LlmMessage>,
+        model: &str,
+        params: &SamplingParams,
+    ) -> Result<String> {
+        let url = format!("{}/api/chat", self.base_url);
+        let body = OllamaChatRequest {
+            model: model.to_string(),
+            messages: messages.iter().map(to_ollama_message).collect(),
+            stream: false,
+            options: OllamaOptions {
+                temperature: params.temperature,
+                top_p: params.top_p,
+                num_predict: params.max_tokens,
+            },
+            format: Some("json".to_string()),
+        };
+
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("Cannot connect to Ollama at {}", self.base_url))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("Ollama chat failed ({status}): {text}"));
+        }
+
+        let parsed: OllamaChatResponse = resp.json().await.context("parse /api/chat response")?;
+        if let Some(err) = parsed.error {
+            return Err(anyhow!("Ollama error: {err}"));
+        }
+        let content = parsed.message.map(|m| m.content).unwrap_or_default();
+        Ok(strip_code_fence(&content))
     }
 
     async fn test_connection(&self) -> Result<ConnectionStatus> {
