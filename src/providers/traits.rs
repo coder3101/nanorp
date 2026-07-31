@@ -61,9 +61,40 @@ pub trait LlmProvider: Send + Sync {
         params: &SamplingParams,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>>;
 
+    /// Perform a non-streaming chat completion that returns structured (JSON)
+    /// output. Used for things like AI-assisted character generation. The
+    /// prompt is expected to instruct the model to respond with a single JSON
+    /// object; providers that support it switch into a JSON mode via their API.
+    ///
+    /// Returns the raw JSON text as produced by the model.
+    async fn chat_json(
+        &self,
+        messages: Vec<LlmMessage>,
+        model: &str,
+        params: &SamplingParams,
+    ) -> Result<String>;
+
     /// Test whether this provider is reachable.
     async fn test_connection(&self) -> Result<ConnectionStatus>;
 
     /// Returns the type of this provider.
     fn provider_type(&self) -> ProviderType;
+}
+
+/// Strip a surrounding ```json ... ``` / ``` ... ``` code fence from model
+/// output, so providers that wrap their JSON in markdown still parse cleanly.
+pub(crate) fn strip_code_fence(text: &str) -> String {
+    let trimmed = text.trim();
+    if let Some(rest) = trimmed.strip_prefix("```") {
+        // Drop a language tag on the opening fence if present (e.g. ```json).
+        let body = rest
+            .split_once('\n')
+            .map(|(_, b)| b)
+            .unwrap_or(rest.trim_start_matches("json"));
+        if let Some(end) = body.rfind("```") {
+            return body[..end].trim().to_string();
+        }
+        return body.trim().to_string();
+    }
+    trimmed.to_string()
 }

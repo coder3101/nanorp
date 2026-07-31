@@ -10,7 +10,7 @@ use std::pin::Pin;
 use crate::models::message::LlmMessage;
 use crate::models::provider::{ConnectionStatus, ModelInfo, ProviderType};
 use crate::models::settings::SamplingParams;
-use crate::providers::traits::{LlmProvider, StreamEvent};
+use crate::providers::traits::{strip_code_fence, LlmProvider, StreamEvent};
 
 pub struct OpenAiProvider {
     client: reqwest::Client,
@@ -68,6 +68,32 @@ struct OpenAiChatRequest {
     top_p: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<OpenAiResponseFormat>,
+}
+
+#[derive(Serialize)]
+struct OpenAiResponseFormat {
+    /// "json_object" is the most widely supported structured-output mode across
+    /// OpenAI and its compatible clones (Groq, vLLM, LM Studio, etc.).
+    r#type: String,
+}
+
+/// Non-streaming chat completion response (used by `chat_json`).
+#[derive(Deserialize)]
+struct OpenAiChatResponse {
+    #[serde(default)]
+    choices: Vec<OpenAiResponseChoice>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiResponseChoice {
+    message: OpenAiResponseMessage,
+}
+
+#[derive(Deserialize)]
+struct OpenAiResponseMessage {
+    content: String,
 }
 
 #[derive(Serialize)]
@@ -198,6 +224,7 @@ impl LlmProvider for OpenAiProvider {
             temperature: params.temperature,
             top_p: params.top_p,
             max_tokens: params.max_tokens,
+            response_format: None,
         };
 
         let resp = self
@@ -269,6 +296,50 @@ impl LlmProvider for OpenAiProvider {
         };
 
         Ok(Box::pin(stream))
+    }
+
+    async fn chat_json(
+        &self,
+        messages: Vec<LlmMessage>,
+        model: &str,
+        params: &SamplingParams,
+    ) -> Result<String> {
+        let url = self.api_url("v1/chat/completions");
+        let body = OpenAiChatRequest {
+            model: model.to_string(),
+            messages: messages.iter().map(to_openai_message).collect(),
+            stream: false,
+            temperature: params.temperature,
+            top_p: params.top_p,
+            max_tokens: params.max_tokens,
+            response_format: Some(OpenAiResponseFormat {
+                r#type: "json_object".to_string(),
+            }),
+        };
+
+        let resp = self
+            .auth(self.client.post(&url).json(&body))
+            .send()
+            .await
+            .with_context(|| format!("Cannot connect to {}", self.base_url))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("Structured completion failed ({status}): {text}"));
+        }
+
+        let parsed: OpenAiChatResponse = resp
+            .json()
+            .await
+            .context("parse chat completion response")?;
+        let content = parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content)
+            .unwrap_or_default();
+        Ok(strip_code_fence(&content))
     }
 
     async fn test_connection(&self) -> Result<ConnectionStatus> {

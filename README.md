@@ -94,6 +94,8 @@ its owner.
 
 **Characters**
 - Name, role, personality, system prompt, greeting, and avatar
+- Generate a character from a plain-text description using any configured
+  model (structured JSON output) — review, then save or retry
 - `{{char}}` / `{{user}}` placeholders resolved at prompt-build time
 - Duplicate, search, and import/export as JSON
 
