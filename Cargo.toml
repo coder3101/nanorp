@@ -1,6 +1,6 @@
 [package]
 name = "nanorp"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "A lightweight, self-hosted AI roleplay chat — bring your own characters and models."
 repository = "https://github.com/coder3101/nanorp"
