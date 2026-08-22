@@ -6,6 +6,7 @@ pub mod character_service;
 pub mod chat_service;
 #[cfg(feature = "ssr")]
 pub mod generation;
+pub mod generation_tracker;
 #[cfg(feature = "ssr")]
 pub mod provider_service;
 #[cfg(feature = "ssr")]

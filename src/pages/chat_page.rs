@@ -11,6 +11,7 @@ use crate::server::chat::{
     stream_chat_reply, stream_regenerate,
 };
 use crate::server::settings::get_settings;
+use crate::services::generation_tracker::use_generation_tracker;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use uuid::Uuid;
@@ -49,11 +50,42 @@ pub fn ChatPage() -> impl IntoView {
     // Local, reactive chat state.
     let messages = RwSignal::new(Vec::<Message>::new());
     let character = RwSignal::new(Option::<Character>::None);
-    let is_streaming = RwSignal::new(false);
-    let streaming_content = RwSignal::new(String::new());
-    let streaming_msg_id = RwSignal::new(Option::<Uuid>::None);
     let selected_provider = RwSignal::new(Option::<Uuid>::None);
     let selected_model = RwSignal::new(Option::<String>::None);
+
+    // Streaming state lives in the app-scoped tracker so it survives page
+    // navigation; these signals derive the live view for the current session.
+    let tracker = use_generation_tracker();
+    let tracker_active = tracker.clone();
+    let tracker_send = tracker.clone();
+    let tracker_regen = tracker.clone();
+    let tracker_edit = tracker.clone();
+    let active_for_session = Signal::derive(move || {
+        session_id
+            .get()
+            .and_then(|sid| tracker_active.active.get().get(&sid).cloned())
+    });
+    let is_streaming = Signal::derive(move || active_for_session.get().is_some());
+    let streaming_content = Signal::derive(move || {
+        active_for_session
+            .get()
+            .map(|a| a.content.get())
+            .unwrap_or_default()
+    });
+    let streaming_msg_id = Signal::derive(move || {
+        if is_streaming.get() {
+            // Placeholder id for the live bubble. Using the session id is
+            // unique among real messages (whose ids are random v4 UUIDs).
+            session_id.get()
+        } else {
+            None
+        }
+    });
+
+    // Guards per-page callbacks so they only touch local state while the page
+    // is still mounted (a reply may finish after the user navigates away).
+    let mounted = RwSignal::new(true);
+    on_cleanup(move || mounted.set(false));
 
     let current_session = expect_context::<CurrentSession>();
 
@@ -102,52 +134,20 @@ pub fn ChatPage() -> impl IntoView {
         }
     });
 
-    // Consume a TextStream future: show a live placeholder, append tokens, then
-    // reload the authoritative message list from the server.
-    let toast_for_stream = toast.clone();
-    let consume_stream = move |fut: std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                Output = Result<leptos::server_fn::codec::TextStream, ServerFnError>,
-            >,
-        >,
-    >| {
-        is_streaming.set(true);
-        streaming_content.set(String::new());
-        streaming_msg_id.set(Some(Uuid::new_v4()));
-
-        let toast_stream = toast_for_stream.clone();
+    // Refresh the authoritative message list once a generation finishes, but
+    // only while this chat page is still mounted.
+    let on_generation_finish = Callback::new(move |sid: Uuid| {
+        if !mounted.get() {
+            return;
+        }
         leptos::task::spawn_local(async move {
-            use futures::StreamExt;
-            match fut.await {
-                Ok(text_stream) => {
-                    let mut stream = text_stream.into_inner();
-                    while let Some(chunk) = stream.next().await {
-                        match chunk {
-                            Ok(text) => streaming_content.update(|s| s.push_str(&text)),
-                            Err(e) => {
-                                toast_stream.error(format!("Stream error: {e}"));
-                                break;
-                            }
-                        }
-                    }
-                }
-                Err(e) => toast_stream.error(format!("Failed: {e}")),
-            }
-
-            is_streaming.set(false);
-            streaming_msg_id.set(None);
-            streaming_content.set(String::new());
-            if let Some(sid) = session_id.get_untracked() {
-                if let Ok(msgs) = get_chat_messages(sid).await {
-                    messages.set(msgs);
-                }
+            if let Ok(msgs) = get_chat_messages(sid).await {
+                messages.set(msgs);
             }
         });
-    };
+    });
 
     let toast_err = toast.clone();
-    let consume_send = consume_stream.clone();
     let send_message = Callback::new(move |(content, images): (String, Vec<ImageUpload>)| {
         let Some(sid) = session_id.get() else { return };
         let Some(pid) = selected_provider.get() else {
@@ -173,14 +173,17 @@ pub fn ChatPage() -> impl IntoView {
             })
         });
 
-        consume_send(Box::pin(stream_chat_reply(
-            sid, content, images, pid, model,
-        )));
+        // The stream is consumed by the app-scoped tracker, so it keeps running
+        // (and the reply is persisted) even if the user navigates away.
+        tracker_send.start(
+            sid,
+            Box::pin(stream_chat_reply(sid, content, images, pid, model)),
+            on_generation_finish,
+        );
     });
 
     // Regenerate the last assistant reply.
     let toast_regen = toast.clone();
-    let consume_regen = consume_stream.clone();
     let regenerate = Callback::new(move |_assistant_id: Uuid| {
         let Some(sid) = session_id.get() else { return };
         let Some(pid) = selected_provider.get() else {
@@ -201,7 +204,11 @@ pub fn ChatPage() -> impl IntoView {
                 m.pop();
             }
         });
-        consume_regen(Box::pin(stream_regenerate(sid, pid, model)));
+        tracker_regen.start(
+            sid,
+            Box::pin(stream_regenerate(sid, pid, model)),
+            on_generation_finish,
+        );
     });
 
     // Edit a user message: persist the edit + attachments + truncate, then regenerate.
@@ -217,7 +224,8 @@ pub fn ChatPage() -> impl IntoView {
             return;
         };
         let toast_inner = toast_edit.clone();
-        let consume = consume_stream.clone();
+        let tracker = tracker_edit.clone();
+        let on_finish = on_generation_finish;
         leptos::task::spawn_local(async move {
             // First persist the edit (content + attachments) + truncate after.
             if let Err(e) = edit_user_message(
@@ -235,7 +243,7 @@ pub fn ChatPage() -> impl IntoView {
             if let Ok(msgs) = get_chat_messages(sid).await {
                 messages.set(msgs);
             }
-            consume(Box::pin(stream_regenerate(sid, pid, model)));
+            tracker.start(sid, Box::pin(stream_regenerate(sid, pid, model)), on_finish);
         });
     });
 
@@ -244,19 +252,10 @@ pub fn ChatPage() -> impl IntoView {
             return;
         };
         leptos::task::spawn_local(async move {
-            // Ask the server to abort the provider request. On success the
-            // stream ends on its own: the consume loop finishes, the partial
-            // reply is persisted server-side, and the message list reloads.
-            match request_stop(sid).await {
-                Ok(true) => {}
-                _ => {
-                    // Nothing active server-side (or the call failed) — just
-                    // clear the local streaming UI.
-                    is_streaming.set(false);
-                    streaming_msg_id.set(None);
-                    streaming_content.set(String::new());
-                }
-            }
+            // Ask the server to abort the provider request. The server persists
+            // whatever partial reply was streamed and closes the stream; the
+            // tracker task then ends, toasts, and reloads the message list.
+            let _ = request_stop(sid).await;
         });
     });
 

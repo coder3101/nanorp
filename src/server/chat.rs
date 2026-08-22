@@ -276,29 +276,38 @@ async fn stream_reply(
         .await
         .map_err(|e| ServerFnError::new(format!("Provider error: {e}")))?;
 
-    let db_for_save = db.clone();
-    let model_for_save = model.clone();
-
     // Register with the cancellation registry so `stop_generation` can abort
-    // this stream (and so a newer generation for the session replaces it).
+    // this generation (and so a newer generation for the session replaces it).
     let (generation_id, mut cancel_rx) = crate::services::generation::begin(session_id);
 
-    let text_stream = async_stream::stream! {
-        // Deregisters this generation when the stream ends OR is dropped
-        // mid-flight (e.g. the client disconnects).
+    // Channel that forwards streamed chunks from the background generation to
+    // the connected client. The buffer lets the background task keep running
+    // even if the client briefly stalls; if the client disconnects the receiver
+    // is dropped and sends fail fast (ignored below) without blocking the task.
+    let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel::<String>(64);
+
+    // The generation runs to completion in its own task, fully decoupled from
+    // the client connection. When the client navigates away (or the tab is
+    // closed) the response stream below is dropped, but this task keeps
+    // accumulating and persists the reply so it is never lost from history.
+    tokio::spawn(async move {
+        // Deregisters this generation when the task ends, whether it completes
+        // naturally, is cancelled, or is replaced by a newer generation.
         let _finish_guard =
             crate::services::generation::FinishGuard::new(session_id, generation_id);
 
         let mut accumulated = String::new();
         // Reasoning tokens from a dedicated API field are wrapped in
-        // <think>...</think> so the client renders them as a collapsible block.
+        //  thinking... response so the client renders them as a collapsible block.
         let mut in_reasoning = false;
 
-        macro_rules! emit {
+        // Push a chunk to the connected client (if any) and accumulate it for
+        // persistence. Send errors mean the client is gone — still accumulate.
+        macro_rules! forward {
             ($text:expr) => {{
                 let t = $text;
                 accumulated.push_str(&t);
-                yield Ok(t);
+                let _ = chunk_tx.send(t).await;
             }};
         }
 
@@ -324,28 +333,28 @@ async fn stream_reply(
                 Ok(StreamEvent::Reasoning(chunk)) => {
                     if !in_reasoning {
                         in_reasoning = true;
-                        emit!("<think>".to_string());
+                        forward!(" thinking".to_string());
                     }
-                    emit!(chunk);
+                    forward!(chunk);
                 }
                 Ok(StreamEvent::Delta(chunk)) => {
                     if in_reasoning {
                         in_reasoning = false;
-                        emit!("</think>".to_string());
+                        forward!(" response".to_string());
                     }
-                    emit!(chunk);
+                    forward!(chunk);
                 }
                 Ok(StreamEvent::Done) => break,
                 // Error text is shown to the client but intentionally NOT
                 // accumulated, so it never gets persisted as message content.
                 Ok(StreamEvent::Error(e)) => {
                     tracing::error!("provider stream error (session {session_id}): {e}");
-                    yield Ok(format!("\n\n[error: {e}]"));
+                    let _ = chunk_tx.send(format!("\n\n[error: {e}]")).await;
                     break;
                 }
                 Err(e) => {
                     tracing::error!("provider stream error (session {session_id}): {e}");
-                    yield Ok(format!("\n\n[error: {e}]"));
+                    let _ = chunk_tx.send(format!("\n\n[error: {e}]")).await;
                     break;
                 }
             }
@@ -356,13 +365,13 @@ async fn stream_reply(
         drop(token_stream);
 
         if in_reasoning {
-            emit!("</think>".to_string());
+            forward!(" response".to_string());
         }
 
         if !accumulated.trim().is_empty() {
-            let db = db_for_save.clone();
+            let db = db.clone();
             let content = accumulated.clone();
-            let model = model_for_save.clone();
+            let model = model.clone();
             let save_result = tokio::task::spawn_blocking(move || {
                 ChatService::new(db).add_message(&NewMessage {
                     session_id,
@@ -380,9 +389,21 @@ async fn stream_reply(
                     tracing::error!("failed to save assistant message (session {session_id}): {e}");
                 }
                 Err(e) => {
-                    tracing::error!("assistant message save task panicked (session {session_id}): {e}");
+                    tracing::error!(
+                        "assistant message save task panicked (session {session_id}): {e}"
+                    );
                 }
             }
+        }
+    });
+
+    // The response stream only forwards chunks from the background generation
+    // to the client. It closes when the generation finishes (sender dropped).
+    // Dropping it (client disconnect) does NOT stop the generation: the task
+    // above continues and persists the reply.
+    let text_stream = async_stream::stream! {
+        while let Some(chunk) = chunk_rx.recv().await {
+            yield Ok(chunk);
         }
     };
 
