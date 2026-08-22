@@ -116,9 +116,9 @@ pub fn ChatPage() -> impl IntoView {
     // Sync loaded data into the reactive working state.
     let load_error = RwSignal::new(Option::<String>::None);
     Effect::new(move |_| {
-        if let Some(sid) = session_id.get() {
-            current_session.0.set(Some(sid));
-        }
+        // Track which session is on screen (also cleared when the id
+        // disappears on navigation away, e.g. back to /characters).
+        current_session.0.set(session_id.get());
         match session_res.get() {
             Some(Some(Ok(data))) => {
                 load_error.set(None);
@@ -148,6 +148,7 @@ pub fn ChatPage() -> impl IntoView {
     });
 
     let toast_err = toast.clone();
+    let toast_send = toast.clone();
     let send_message = Callback::new(move |(content, images): (String, Vec<ImageUpload>)| {
         let Some(sid) = session_id.get() else { return };
         let Some(pid) = selected_provider.get() else {
@@ -178,12 +179,14 @@ pub fn ChatPage() -> impl IntoView {
         tracker_send.start(
             sid,
             Box::pin(stream_chat_reply(sid, content, images, pid, model)),
+            toast_send.clone(),
             on_generation_finish,
         );
     });
 
     // Regenerate the last assistant reply.
     let toast_regen = toast.clone();
+    let toast_stream_regen = toast.clone();
     let regenerate = Callback::new(move |_assistant_id: Uuid| {
         let Some(sid) = session_id.get() else { return };
         let Some(pid) = selected_provider.get() else {
@@ -207,6 +210,7 @@ pub fn ChatPage() -> impl IntoView {
         tracker_regen.start(
             sid,
             Box::pin(stream_regenerate(sid, pid, model)),
+            toast_stream_regen.clone(),
             on_generation_finish,
         );
     });
@@ -243,7 +247,12 @@ pub fn ChatPage() -> impl IntoView {
             if let Ok(msgs) = get_chat_messages(sid).await {
                 messages.set(msgs);
             }
-            tracker.start(sid, Box::pin(stream_regenerate(sid, pid, model)), on_finish);
+            tracker.start(
+                sid,
+                Box::pin(stream_regenerate(sid, pid, model)),
+                toast_inner.clone(),
+                on_finish,
+            );
         });
     });
 

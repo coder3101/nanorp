@@ -1,5 +1,5 @@
-use crate::components::layout::MainLayout;
-use crate::components::ui::toast::{use_toast, ToastProvider, Toaster};
+use crate::components::layout::{CurrentSession, MainLayout};
+use crate::components::ui::toast::{ToastProvider, Toaster};
 use crate::pages::characters_page::CharactersPage;
 use crate::pages::chat_page::ChatPage;
 use crate::pages::home_page::HomePage;
@@ -12,6 +12,7 @@ use leptos_router::{
     ParamSegment, StaticSegment,
 };
 use std::collections::HashMap;
+use uuid::Uuid;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -47,14 +48,16 @@ pub fn App() -> impl IntoView {
     }
 }
 
-/// App routes plus the app-scoped services that must survive page navigation.
-/// Lives inside `ToastProvider` so the generation tracker can capture the toast
-/// context (used to notify the user when a background reply finishes).
+/// App routes plus the app-scoped services that must survive page navigation:
+/// the current-session marker and the streaming-generation tracker, whose
+/// stream-consumption tasks outlive individual pages.
 #[component]
 fn AppRoutes() -> impl IntoView {
+    let viewing = RwSignal::new(None::<Uuid>);
+    provide_context(CurrentSession(viewing));
     provide_context(GenerationTracker {
         active: RwSignal::new(HashMap::new()),
-        toast: Some(use_toast()),
+        viewing,
     });
 
     view! {

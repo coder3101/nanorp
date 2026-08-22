@@ -1,5 +1,12 @@
 #[cfg(feature = "ssr")]
-#[tokio::main]
+// Single-threaded runtime: Leptos SSR wraps reactive state in thread-affine
+// SendWrappers, and on a multi-thread runtime the response stream can be
+// polled (and the request owner disposed) on a different worker than the one
+// that rendered, panicking with "Dropped SendWrapper<T> variable from a
+// thread different to the one it has been created with". One thread makes
+// that impossible; blocking work still goes through spawn_blocking and async
+// IO yields cooperatively, so concurrent requests/streaming are unaffected.
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     use axum::extract::DefaultBodyLimit;
     use axum::Router;
