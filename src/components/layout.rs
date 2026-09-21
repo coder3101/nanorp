@@ -14,10 +14,11 @@ pub struct CurrentSession(pub RwSignal<Option<uuid::Uuid>>);
 #[component]
 pub fn MainLayout() -> impl IntoView {
     let sidebar_open = RwSignal::new(false);
-    let current_session = RwSignal::new(None::<uuid::Uuid>);
+    // Provided at app scope (see AppRoutes) so services like the generation
+    // tracker can tell which session is currently on screen.
+    let CurrentSession(current_session) = expect_context::<CurrentSession>();
 
     provide_context(SidebarState { open: sidebar_open });
-    provide_context(CurrentSession(current_session));
 
     // Chat sessions render their own header (with a menu button on mobile),
     // so the generic mobile top bar is hidden there to avoid stacked chrome.

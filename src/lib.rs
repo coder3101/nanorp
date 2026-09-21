@@ -19,7 +19,6 @@ pub mod crypto;
 pub mod db;
 #[cfg(feature = "ssr")]
 pub mod providers;
-#[cfg(feature = "ssr")]
 pub mod services;
 
 // Server functions (shared signatures, server-only implementation)
