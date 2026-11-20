@@ -1,6 +1,6 @@
 [package]
 name = "nanorp"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "A lightweight, self-hosted AI roleplay chat — bring your own characters and models."
 repository = "https://github.com/coder3101/nanorp"
@@ -113,7 +113,6 @@ pulldown-cmark = { version = "0.12", default-features = false, features = [
 ] }
 
 # -- Logging --
-tracing = "0.1"
 tracing-subscriber = { version = "0.3", optional = true }
 
 # -- Error handling --
