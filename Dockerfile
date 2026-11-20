@@ -7,7 +7,11 @@
 # builds natively per target; we instead build on the target platform (via
 # QEMU for foreign archs) and fetch a prebuilt cargo-leptos to avoid compiling
 # the tool under emulation.
-FROM rust:1.97-bookworm AS builder
+# Trixie (glibc 2.41) is required here: cargo-leptos downloads a glibc-linked
+# aarch64 wasm-bindgen CLI whose newest builds need GLIBC_2.38, which bookworm
+# (glibc 2.36) does not provide. The x86_64 build uses a static musl binary and
+# is unaffected, but both arches share this image.
+FROM rust:1.97-trixie AS builder
 
 ARG TARGETARCH
 ARG CARGO_LEPTOS_VERSION=0.3.7
@@ -53,7 +57,9 @@ RUN cargo leptos build --release --precompress
 # ---------------------------------------------------------------------------
 # Stage 2 — minimal runtime
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
+# Match the builder's glibc: the SSR binary is dynamically linked, so a binary
+# built against trixie's glibc cannot run on an older bookworm runtime.
+FROM debian:trixie-slim AS runtime
 
 # `image.source` is what links the published package back to the repository.
 LABEL org.opencontainers.image.title="NanoRP" \
