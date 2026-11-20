@@ -355,6 +355,7 @@ pub fn ChatPage() -> impl IntoView {
                 </Show>
                 <MessageList
                     messages=display_messages
+                    session_id=session_id
                     character_name=Signal::derive(move || {
                         character.get().map(|c| c.name).unwrap_or_default()
                     })

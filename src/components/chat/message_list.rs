@@ -5,9 +5,20 @@ use leptos::html;
 use leptos::prelude::*;
 use uuid::Uuid;
 
+/// Whether a content update should pull the view back to the bottom.
+///
+/// `scrollTop` changes synchronously when the user scrolls, but the `scroll`
+/// event that updates `is_at_bottom` can arrive a frame later. A position above
+/// the one we last pinned to is therefore an intentional scroll-up regardless
+/// of the (possibly stale) flag.
+fn should_follow(top: f64, last_pinned_top: f64, is_at_bottom: bool) -> bool {
+    is_at_bottom && top + 1.0 >= last_pinned_top
+}
+
 #[component]
 pub fn MessageList(
     messages: Signal<Vec<Message>>,
+    session_id: Signal<Option<Uuid>>,
     #[prop(into, optional)] character_name: MaybeProp<String>,
     #[prop(into, optional)] character_avatar: MaybeProp<String>,
     #[prop(optional)] streaming_msg_id: Signal<Option<Uuid>>,
@@ -18,32 +29,68 @@ pub fn MessageList(
 ) -> impl IntoView {
     let scroll_ref = NodeRef::<html::Div>::new();
     let is_at_bottom = RwSignal::new(true);
+    // The `scrollTop` we last pinned the view to. Streaming updates can outrun
+    // the browser's async `scroll` event, so checking this position lets us
+    // notice an upward scroll before `is_at_bottom` catches up.
+    let last_pinned_top = StoredValue::new(0.0_f64);
+    // ChatPage is reused when navigating between sessions, so the follow state
+    // has to be reset whenever the session changes.
+    let last_session = StoredValue::new(None::<Uuid>);
     let threshold = 100.0;
 
     let on_scroll = Callback::new(move |_: ()| {
         if let Some(el) = scroll_ref.get_untracked() {
-            let at_bottom =
-                (el.scroll_height() as f64 - el.scroll_top() as f64 - el.client_height() as f64)
-                    < threshold;
+            let top = el.scroll_top() as f64;
+            let max = (el.scroll_height() - el.client_height()).max(0) as f64;
+            let at_bottom = (max - top) < threshold;
             is_at_bottom.set(at_bottom);
+            // Keep the pinned position current whenever the user settles at the
+            // bottom, so a later upward scroll is measured against it.
+            if at_bottom {
+                last_pinned_top.set_value(top);
+            }
         }
     });
 
+    // ScrollArea reports upward wheel/touch intent before the deferred
+    // `scroll` event, so pinning is released immediately.
+    let on_scroll_up = Callback::new(move |_: ()| is_at_bottom.set(false));
+
     let scroll_ref_for_effect = scroll_ref;
     let is_at_bottom_for_effect = is_at_bottom;
+    let last_pinned_top_for_effect = last_pinned_top;
+    let last_session_for_effect = last_session;
+    let session_id_for_effect = session_id;
     Effect::new(move |_| {
+        let session = session_id_for_effect.get();
         let _ = messages.get();
         let _ = streaming_content.get();
-        if is_at_bottom_for_effect.get_untracked() {
-            if let Some(el) = scroll_ref_for_effect.get() {
-                el.set_scroll_top(el.scroll_height());
+
+        if last_session_for_effect.get_value() != session {
+            last_session_for_effect.set_value(session);
+            is_at_bottom_for_effect.set(true);
+            last_pinned_top_for_effect.set_value(0.0);
+        }
+
+        if let Some(el) = scroll_ref_for_effect.get() {
+            let top = el.scroll_top() as f64;
+            let max = (el.scroll_height() - el.client_height()).max(0);
+            if should_follow(
+                top,
+                last_pinned_top_for_effect.get_value(),
+                is_at_bottom_for_effect.get_untracked(),
+            ) {
+                el.set_scroll_top(max);
+                last_pinned_top_for_effect.set_value(max as f64);
             }
         }
     });
 
     let scroll_to_bottom = move |_| {
         if let Some(el) = scroll_ref.get() {
-            el.set_scroll_top(el.scroll_height());
+            let max = (el.scroll_height() - el.client_height()).max(0);
+            el.set_scroll_top(max);
+            last_pinned_top.set_value(max as f64);
             is_at_bottom.set(true);
         }
     };
@@ -53,7 +100,7 @@ pub fn MessageList(
 
     view! {
         <div class="relative min-h-0 flex-1">
-            <ScrollArea class="h-full" node_ref=scroll_ref on_scroll=on_scroll>
+            <ScrollArea class="h-full" node_ref=scroll_ref on_scroll=on_scroll on_scroll_up=on_scroll_up>
                 <div class="mx-auto w-full max-w-3xl py-6">
                     <Show
                         when=move || has_messages.get()
@@ -127,5 +174,30 @@ pub fn MessageList(
                 </div>
             </Show>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_follow;
+
+    #[test]
+    fn follows_while_pinned_to_bottom() {
+        assert!(should_follow(1000.0, 1000.0, true));
+    }
+
+    #[test]
+    fn stops_when_user_scrolled_up() {
+        assert!(!should_follow(900.0, 1000.0, true));
+    }
+
+    #[test]
+    fn stops_when_not_at_bottom() {
+        assert!(!should_follow(1000.0, 1000.0, false));
+    }
+
+    #[test]
+    fn tolerates_a_pixel_of_rounding() {
+        assert!(should_follow(999.0, 1000.0, true));
     }
 }
