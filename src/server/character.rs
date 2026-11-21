@@ -92,52 +92,13 @@ pub async fn upload_character_avatar(
     data: String,
     content_type: String,
 ) -> Result<Character, ServerFnError> {
-    use crate::config;
     use crate::db::Db;
     use crate::services::character_service::CharacterService;
-    use base64::Engine;
-
-    // Validate MIME type and derive a file extension.
-    let ext = match content_type.as_str() {
-        "image/png" => "png",
-        "image/jpeg" | "image/jpg" => "jpg",
-        "image/webp" => "webp",
-        "image/gif" => "gif",
-        other => {
-            return Err(ServerFnError::new(format!(
-                "Unsupported image type: {other}"
-            )))
-        }
-    };
-
-    // Decode base64.
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data.as_bytes())
-        .map_err(|_| ServerFnError::new("Invalid image data"))?;
-
-    // Size guard: 5 MB.
-    if bytes.len() > 5 * 1024 * 1024 {
-        return Err(ServerFnError::new("Image is too large (max 5 MB)"));
-    }
 
     let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
-    let id_str = id.to_string();
-    let rel_path = format!("avatars/{}.{}", id_str, ext);
-
     tokio::task::spawn_blocking(move || -> anyhow::Result<Character> {
-        // Remove any previous avatar files for this id (different extensions).
-        for e in ["png", "jpg", "webp", "gif"] {
-            if let Ok(p) = config::avatar_path_ext(&id_str, e) {
-                let _ = std::fs::remove_file(p);
-            }
-        }
-        // Write the new file.
-        let path = config::avatar_path_ext(&id_str, ext)?;
-        std::fs::write(&path, &bytes)?;
-
-        // Update DB.
-        CharacterService::new(db).set_avatar_path(id, Some(rel_path))
+        CharacterService::new(db).replace_avatar(id, &data, &content_type)
     })
     .await
     .map_err(|e| ServerFnError::new(format!("Task failed: {e}")))?

@@ -120,8 +120,9 @@ pub fn Toaster() -> impl IntoView {
 
     view! {
         <div
-            class="fixed top-4 right-4 z-[100] flex flex-col gap-2 w-full max-w-[420px] pointer-events-none"
+            class="toast-viewport fixed z-[100] mx-auto flex max-w-[420px] flex-col gap-2 pointer-events-none sm:mx-0"
             aria-live="polite"
+            aria-atomic="false"
         >
             <For
                 each=move || ctx.toasts.get()
@@ -163,19 +164,20 @@ fn ToastItem(toast: ToastData) -> impl IntoView {
         <div
             class=format!(
                 "group pointer-events-auto relative flex w-full items-center justify-between \
-                 space-x-2 overflow-hidden rounded-md border p-4 pr-8 shadow-lg \
+                 space-x-2 overflow-hidden rounded-md border p-4 pr-12 shadow-lg \
                  transition-all animate-slide-in-from-top {}",
                 variant_classes
             )
+            role=if toast.variant == ToastVariant::Error { "alert" } else { "status" }
         >
-            <div class="flex flex-col gap-1">
+            <div class="min-w-0 flex flex-col gap-1 break-words">
                 <p class="text-sm font-semibold">{toast.title.clone()}</p>
                 {move || toast.description.clone().map(|desc| view! {
-                    <p class="text-xs opacity-90">{desc}</p>
+                    <p class="text-sm leading-snug opacity-90">{desc}</p>
                 })}
             </div>
             <button
-                class="absolute right-2 top-2 rounded-md p-1 opacity-0 transition-opacity \
+                class="absolute right-0 top-0 inline-flex h-11 w-11 items-center justify-center rounded-md opacity-0 transition-opacity \
                        group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 \
                        hover:bg-black/10 dark:hover:bg-white/10"
                 aria-label="Dismiss notification"

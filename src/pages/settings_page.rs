@@ -5,7 +5,7 @@ use crate::components::ui::modal::Modal;
 use crate::components::ui::select::{Select, SelectOption};
 use crate::components::ui::toast::{use_toast, ToastVariant};
 use crate::models::provider::{
-    ConnectionStatus, NewProvider, Provider, ProviderType, UpdateProvider,
+    ConnectionStatus, NewProvider, ProviderDto, ProviderType, UpdateProvider,
 };
 use crate::models::settings::AppSettings;
 use crate::server::provider::{
@@ -42,18 +42,24 @@ pub fn SettingsPage() -> impl IntoView {
 
     // -- Provider dialog state ---------------------------------------------
     let provider_dialog_open = RwSignal::new(false);
-    let editing_provider = RwSignal::new(Option::<Provider>::None);
+    let editing_provider = RwSignal::new(Option::<ProviderDto>::None);
 
     let prov_form_name = RwSignal::new(String::new());
     let prov_form_type = RwSignal::new("ollama".to_string());
     let prov_form_url = RwSignal::new(String::new());
     let prov_form_key = RwSignal::new(String::new());
+    // Existing keys are kept by default. Replacing requires a non-empty value;
+    // clearing is explicit and maps to Some(None) in UpdateProvider.
+    let prov_key_action = RwSignal::new("keep".to_string());
     let prov_form_default = RwSignal::new(false);
     let prov_name_error = RwSignal::new(Option::<String>::None);
     let prov_url_error = RwSignal::new(Option::<String>::None);
+    let prov_key_error = RwSignal::new(Option::<String>::None);
+    let prov_save_error = RwSignal::new(Option::<String>::None);
     let saving = RwSignal::new(false);
     // Snapshot of the form as opened, for the unsaved-changes guard.
     let prov_snapshot = StoredValue::new((
+        String::new(),
         String::new(),
         String::new(),
         String::new(),
@@ -77,40 +83,47 @@ pub fn SettingsPage() -> impl IntoView {
         prov_form_type.set("ollama".to_string());
         prov_form_url.set(String::new());
         prov_form_key.set(String::new());
+        prov_key_action.set("replace".to_string());
         prov_form_default.set(false);
         prov_name_error.set(None);
         prov_url_error.set(None);
+        prov_key_error.set(None);
+        prov_save_error.set(None);
         prov_snapshot.set_value((
             String::new(),
             "ollama".to_string(),
             String::new(),
             String::new(),
+            "replace".to_string(),
             false,
         ));
         provider_dialog_open.set(true);
     });
 
-    let open_edit_provider = Callback::new(move |p: Provider| {
-        editing_provider.set(Some(p.clone()));
+    let open_edit_provider = Callback::new(move |p: ProviderDto| {
         let type_str = match p.provider_type {
             ProviderType::Ollama => "ollama".to_string(),
             ProviderType::OpenAiCompatible => "openai_compatible".to_string(),
         };
-        let key = p.api_key.unwrap_or_default();
         prov_snapshot.set_value((
             p.name.clone(),
             type_str.clone(),
             p.api_url.clone(),
-            key.clone(),
+            String::new(),
+            "keep".to_string(),
             p.is_default,
         ));
-        prov_form_name.set(p.name);
+        prov_form_name.set(p.name.clone());
         prov_form_type.set(type_str);
-        prov_form_url.set(p.api_url);
-        prov_form_key.set(key);
+        prov_form_url.set(p.api_url.clone());
+        prov_form_key.set(String::new());
+        prov_key_action.set("keep".to_string());
         prov_form_default.set(p.is_default);
+        editing_provider.set(Some(p));
         prov_name_error.set(None);
         prov_url_error.set(None);
+        prov_key_error.set(None);
+        prov_save_error.set(None);
         provider_dialog_open.set(true);
     });
 
@@ -121,6 +134,7 @@ pub fn SettingsPage() -> impl IntoView {
             prov_form_type.get_untracked(),
             prov_form_url.get_untracked(),
             prov_form_key.get_untracked(),
+            prov_key_action.get_untracked(),
             prov_form_default.get_untracked(),
         );
         if current == prov_snapshot.get_value()
@@ -156,19 +170,37 @@ pub fn SettingsPage() -> impl IntoView {
         } else {
             ProviderType::OpenAiCompatible
         };
+        let key_action = prov_key_action.get();
         let key = Some(prov_form_key.get()).filter(|k| !k.is_empty());
         let editing = editing_provider.get();
+        if editing.is_some()
+            && provider_type == ProviderType::OpenAiCompatible
+            && key_action == "replace"
+            && key.is_none()
+        {
+            prov_key_error.set(Some(
+                "Enter the replacement key, or choose Keep current key or Clear key.".to_string(),
+            ));
+            return;
+        }
+        prov_key_error.set(None);
+        prov_save_error.set(None);
         let toast_inner = toast_save.clone();
         saving.set(true);
 
         leptos::task::spawn_local(async move {
             let result = if let Some(existing) = editing {
+                let api_key = match (provider_type.clone(), key_action.as_str()) {
+                    (ProviderType::Ollama, _) | (_, "clear") => Some(None),
+                    (_, "replace") => Some(key),
+                    _ => None, // keep the encrypted key exactly as stored
+                };
                 update_provider(UpdateProvider {
                     id: existing.id,
                     name: Some(prov_form_name.get_untracked()),
                     provider_type: Some(provider_type),
                     api_url: Some(prov_form_url.get_untracked()),
-                    api_key: Some(key),
+                    api_key,
                     is_default: Some(prov_form_default.get_untracked()),
                 })
                 .await
@@ -193,7 +225,11 @@ pub fn SettingsPage() -> impl IntoView {
                     editing_provider.set(None);
                     providers_version.update(|v| *v += 1);
                 }
-                Err(e) => toast_inner.error(format!("Save failed: {e}")),
+                Err(e) => {
+                    let message = format!("Save failed: {e}");
+                    prov_save_error.set(Some(message.clone()));
+                    toast_inner.error(message);
+                }
             }
         });
     });
@@ -253,12 +289,21 @@ pub fn SettingsPage() -> impl IntoView {
 
     // -- General settings save ---------------------------------------------
     let settings_draft = RwSignal::new(AppSettings::default());
+    let max_tokens_input = RwSignal::new(String::new());
+    let max_tokens_error = RwSignal::new(Option::<String>::None);
+    let settings_save_status = RwSignal::new(Option::<String>::None);
+    let settings_save_error = RwSignal::new(Option::<String>::None);
     // Last-loaded (or last-saved) settings, used to detect unsaved edits.
     let settings_saved = StoredValue::new(AppSettings::default());
     // Keep the draft in sync once settings load.
     Effect::new(move |_| {
         if let Some(Ok(s)) = settings_resource.get() {
             settings_saved.set_value(s.clone());
+            max_tokens_input.set(s.max_tokens.map(|v| v.to_string()).unwrap_or_default());
+            max_tokens_error.set(
+                (s.max_tokens == Some(0))
+                    .then(|| "Max tokens must be greater than zero, or left blank.".to_string()),
+            );
             settings_draft.set(s);
         }
     });
@@ -266,18 +311,32 @@ pub fn SettingsPage() -> impl IntoView {
     let toast_settings = toast.clone();
     let general_saving = RwSignal::new(false);
     let save_general = Callback::new(move |_| {
+        if active_tab.get_untracked() == "chat" && max_tokens_error.get_untracked().is_some() {
+            settings_save_error.set(Some("Fix Max tokens before saving settings.".to_string()));
+            settings_save_status.set(None);
+            return;
+        }
         let draft = settings_draft.get();
         let toast_inner = toast_settings.clone();
         general_saving.set(true);
+        settings_save_status.set(None);
+        settings_save_error.set(None);
         leptos::task::spawn_local(async move {
             let res = update_settings(draft.clone()).await;
             general_saving.set(false);
             match res {
                 Ok(()) => {
                     settings_saved.set_value(draft);
+                    settings_save_status.set(Some("Settings saved.".to_string()));
+                    settings_save_error.set(None);
                     toast_inner.success("Settings saved");
                 }
-                Err(e) => toast_inner.error(format!("Save failed: {e}")),
+                Err(e) => {
+                    let message = format!("Save failed: {e}");
+                    settings_save_error.set(Some(message.clone()));
+                    settings_save_status.set(None);
+                    toast_inner.error(message);
+                }
             }
         });
     });
@@ -312,7 +371,7 @@ pub fn SettingsPage() -> impl IntoView {
                 </div>
 
                 <div class="flex flex-col gap-8 lg:flex-row">
-                    <nav class="flex gap-1 overflow-x-auto lg:w-52 lg:shrink-0 lg:flex-col">
+                    <nav aria-label="Settings sections" role="tablist" class="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:flex lg:w-52 lg:shrink-0 lg:flex-col">
                         <SettingsNavItem
                             id="providers" active=active_tab on_select=switch_tab label="Providers"
                             icon=view! {
@@ -343,6 +402,7 @@ pub fn SettingsPage() -> impl IntoView {
                         // ---- Providers ----
                         <Show when=move || active_tab.get() == "providers">
                             <SettingsSection
+                                id="settings-panel-providers"
                                 title="LLM Providers"
                                 description="Connect to Ollama or any OpenAI-compatible endpoint. You can switch between them at any time."
                             >
@@ -365,8 +425,9 @@ pub fn SettingsPage() -> impl IntoView {
                                                     </div>
                                                 }.into_any(),
                                                 Err(e) => view! {
-                                                    <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                                                        "Failed to load providers: " {e.to_string()}
+                                                    <div role="alert" class="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                                                        <p class="break-words">"Failed to load providers: " {e.to_string()}</p>
+                                                        <button class=BTN_OUTLINE on:click=move |_| providers_version.update(|v| *v += 1)>"Retry"</button>
                                                     </div>
                                                 }.into_any(),
                                             }
@@ -387,8 +448,9 @@ pub fn SettingsPage() -> impl IntoView {
                         // ---- General ----
                         <Show when=move || active_tab.get() == "general">
                             <SettingsSection
+                                id="settings-panel-general"
                                 title="General"
-                                description="Defaults applied to new conversations."
+                                description="Your name and system prompt are applied whenever a reply is generated."
                             >
                                 <Transition fallback=|| view! {
                                     <div class="space-y-6">
@@ -433,14 +495,22 @@ pub fn SettingsPage() -> impl IntoView {
                                                     />
                                                 </Field>
 
-                                                <div class="flex justify-end">
+                                                <div class="space-y-2" aria-live="polite">
+                                                    {move || settings_save_status.get().map(|message| view! {
+                                                        <p class="text-sm text-green-600 dark:text-green-400">{message}</p>
+                                                    })}
+                                                    {move || settings_save_error.get().map(|message| view! {
+                                                        <p role="alert" class="break-words text-sm text-destructive">{message}</p>
+                                                    })}
+                                                    <div class="flex justify-stretch sm:justify-end">
                                                     <button
-                                                        class=BTN_PRIMARY
-                                                        disabled=move || general_saving.get()
+                                                        class=format!("{} w-full sm:w-auto", BTN_PRIMARY)
+                                                        disabled=move || general_saving.get() || (active_tab.get() == "chat" && max_tokens_error.get().is_some())
                                                         on:click=move |_| save_general.run(())
                                                     >
                                                         {move || if general_saving.get() { "Saving..." } else { "Save changes" }}
                                                     </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         }
@@ -452,6 +522,7 @@ pub fn SettingsPage() -> impl IntoView {
                         // ---- Chat / generation ----
                         <Show when=move || active_tab.get() == "chat">
                             <SettingsSection
+                                id="settings-panel-chat"
                                 title="Chat"
                                 description="Control how responses are generated and displayed."
                             >
@@ -505,6 +576,7 @@ pub fn SettingsPage() -> impl IntoView {
                                                     label="Max tokens"
                                                     for_id="set-max-tokens"
                                                     hint="Maximum length of a reply. Leave empty for the provider default."
+                                                    error=Signal::derive(move || max_tokens_error.get().unwrap_or_default())
                                                 >
                                                     <input
                                                         id="set-max-tokens"
@@ -512,24 +584,54 @@ pub fn SettingsPage() -> impl IntoView {
                                                         r#type="number"
                                                         min="1"
                                                         placeholder="Unlimited"
-                                                        prop:value=move || settings_draft.get().max_tokens.map(|v| v.to_string()).unwrap_or_default()
+                                                        prop:value=move || max_tokens_input.get()
+                                                        aria-invalid=move || max_tokens_error.get().is_some().to_string()
                                                         on:input=move |ev| {
                                                             let input = ev.target().unwrap().unchecked_into::<leptos::web_sys::HtmlInputElement>();
                                                             let val = input.value();
-                                                            let parsed = val.trim().parse::<u32>().ok().filter(|v| *v > 0);
-                                                            settings_draft.update(|s| s.max_tokens = parsed);
+                                                            max_tokens_input.set(val.clone());
+                                                            settings_save_status.set(None);
+                                                            settings_save_error.set(None);
+                                                            let trimmed = val.trim();
+                                                            if trimmed.is_empty() {
+                                                                max_tokens_error.set(None);
+                                                                settings_draft.update(|s| s.max_tokens = None);
+                                                            } else {
+                                                                match trimmed.parse::<u32>() {
+                                                                    Ok(value) if value > 0 => {
+                                                                        max_tokens_error.set(None);
+                                                                        settings_draft.update(|s| s.max_tokens = Some(value));
+                                                                    }
+                                                                    _ => {
+                                                                        // Keep the invalid text visible and preserve the
+                                                                        // previous valid draft instead of silently using
+                                                                        // the provider default.
+                                                                        max_tokens_error.set(Some(
+                                                                            "Enter a whole number greater than zero and no larger than 4,294,967,295, or leave it blank.".to_string()
+                                                                        ));
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     />
                                                 </Field>
 
-                                                <div class="flex justify-end">
+                                                <div class="space-y-2" aria-live="polite">
+                                                    {move || settings_save_status.get().map(|message| view! {
+                                                        <p class="text-sm text-green-600 dark:text-green-400">{message}</p>
+                                                    })}
+                                                    {move || settings_save_error.get().map(|message| view! {
+                                                        <p role="alert" class="break-words text-sm text-destructive">{message}</p>
+                                                    })}
+                                                    <div class="flex justify-stretch sm:justify-end">
                                                     <button
-                                                        class=BTN_PRIMARY
-                                                        disabled=move || general_saving.get()
+                                                        class=format!("{} w-full sm:w-auto", BTN_PRIMARY)
+                                                        disabled=move || general_saving.get() || (active_tab.get() == "chat" && max_tokens_error.get().is_some())
                                                         on:click=move |_| save_general.run(())
                                                     >
                                                         {move || if general_saving.get() { "Saving..." } else { "Save changes" }}
                                                     </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         }
@@ -541,6 +643,7 @@ pub fn SettingsPage() -> impl IntoView {
                         // ---- Appearance ----
                         <Show when=move || active_tab.get() == "appearance">
                             <SettingsSection
+                                id="settings-panel-appearance"
                                 title="Appearance"
                                 description="Customize the look and feel. Your choice is saved on this device."
                             >
@@ -562,7 +665,7 @@ pub fn SettingsPage() -> impl IntoView {
             <Modal
                 open=provider_dialog_open
                 label=provider_dialog_title
-                class="max-w-lg p-6"
+                class="max-w-lg p-4 sm:p-6"
                 on_close=close_provider_dialog
             >
                 <h2 class="text-lg font-semibold">{provider_dialog_title}</h2>
@@ -621,19 +724,52 @@ pub fn SettingsPage() -> impl IntoView {
                     </Field>
 
                     <Show when=move || prov_form_type.get() == "openai_compatible">
-                        <Field label="API Key" for_id="prov-key" hint="Stored locally. Sent only to the endpoint above.">
-                            <input
-                                type="password"
-                                id="prov-key"
-                                class=INPUT
-                                placeholder="sk-..."
-                                prop:value=move || prov_form_key.get()
-                                on:input=move |ev| {
-                                    let input = ev.target().unwrap().unchecked_into::<leptos::web_sys::HtmlInputElement>();
-                                    prov_form_key.set(input.value());
-                                }
-                            />
-                        </Field>
+                        <Show when=move || editing_provider.get().is_some()>
+                            <Field
+                                label="Saved API key"
+                                for_id="prov-key-action"
+                                hint="The existing key is never sent back to this browser."
+                            >
+                                <Select
+                                    id="prov-key-action"
+                                    value=prov_key_action
+                                    options=vec![
+                                        SelectOption::new("keep", "Keep current key"),
+                                        SelectOption::new("replace", "Replace key"),
+                                        SelectOption::new("clear", "Clear key"),
+                                    ]
+                                />
+                            </Field>
+                        </Show>
+                        <Show when=move || editing_provider.get().is_none() || prov_key_action.get() == "replace">
+                            <Field
+                                label="API Key"
+                                for_id="prov-key"
+                                hint="Stored encrypted on the server. Sent only to the endpoint above."
+                                error=Signal::derive(move || prov_key_error.get().unwrap_or_default())
+                            >
+                                <input
+                                    type="password"
+                                    id="prov-key"
+                                    class=INPUT
+                                    autocomplete="new-password"
+                                    placeholder="sk-..."
+                                    prop:value=move || prov_form_key.get()
+                                    on:input=move |ev| {
+                                        let input = ev.target().unwrap().unchecked_into::<leptos::web_sys::HtmlInputElement>();
+                                        prov_form_key.set(input.value());
+                                        prov_key_error.set(None);
+                                    }
+                                />
+                            </Field>
+                        </Show>
+                        <p class="-mt-2 text-xs text-muted-foreground">
+                            {move || match (editing_provider.get().is_some(), prov_key_action.get().as_str()) {
+                                (true, "clear") => "The saved key will be removed when you save.",
+                                (true, "keep") => "No key change will be made.",
+                                _ => "Leave blank only when this endpoint does not require a key.",
+                            }}
+                        </p>
                     </Show>
 
                     <label class="flex cursor-pointer items-center gap-3 rounded-lg border border-border p-3 hover:bg-accent/50">
@@ -652,12 +788,18 @@ pub fn SettingsPage() -> impl IntoView {
                     </label>
                 </div>
 
-                <div class="mt-6 flex justify-end gap-2">
-                    <button class=BTN_OUTLINE on:click=move |_| close_provider_dialog.run(())>
+                {move || prov_save_error.get().map(|error| view! {
+                    <p role="alert" class="mt-5 break-words rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                        {error}
+                    </p>
+                })}
+
+                <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                    <button class=format!("{} w-full sm:w-auto", BTN_OUTLINE) on:click=move |_| close_provider_dialog.run(())>
                         "Cancel"
                     </button>
                     <button
-                        class=BTN_PRIMARY
+                        class=format!("{} w-full sm:w-auto", BTN_PRIMARY)
                         disabled=move || saving.get()
                         on:click=move |_| save_provider.run(())
                     >
@@ -693,6 +835,10 @@ fn SettingsNavItem(
                     format!("{} text-muted-foreground hover:bg-accent/50 hover:text-foreground", base)
                 }
             }
+            role="tab"
+            id=format!("settings-tab-{id}")
+            aria-controls=format!("settings-panel-{id}")
+            aria-selected=move || is_active.get().to_string()
             aria-current=move || if is_active.get() { "page" } else { "false" }
             on:click=move |_| on_select.run(id)
         >
@@ -704,12 +850,13 @@ fn SettingsNavItem(
 
 #[component]
 fn SettingsSection(
+    id: &'static str,
     title: &'static str,
     description: &'static str,
     children: Children,
 ) -> impl IntoView {
     view! {
-        <div class="animate-fade-in">
+        <div id=id role="tabpanel" aria-labelledby=id.replace("panel", "tab") class="animate-fade-in">
             <div class="mb-5">
                 <h2 class="text-lg font-semibold">{title}</h2>
                 <p class="mt-0.5 text-sm text-muted-foreground">{description}</p>
@@ -840,9 +987,9 @@ fn ThemeOption(
 
 #[component]
 fn ProviderCard(
-    provider: Provider,
+    provider: ProviderDto,
     statuses: RwSignal<std::collections::HashMap<Uuid, ConnectionStatus>>,
-    on_edit: Callback<Provider>,
+    on_edit: Callback<ProviderDto>,
     on_delete: Callback<Uuid>,
     on_test: Callback<Uuid>,
 ) -> impl IntoView {
@@ -853,7 +1000,7 @@ fn ProviderCard(
     };
     let p_name = provider.name.clone();
     let p_url = provider.api_url.clone();
-    let p_api_key = provider.api_key.clone();
+    let p_has_api_key = provider.has_api_key;
     let p_is_default = provider.is_default;
     let p_for_edit = provider.clone();
 
@@ -890,12 +1037,12 @@ fn ProviderCard(
                                 </span>
                             })}
                         </div>
-                        <p class="mt-0.5 truncate text-xs text-muted-foreground">
-                            {prov_type_str} " · " {p_url}
+                        <p class="mt-0.5 break-all select-text text-xs text-muted-foreground">
+                            {prov_type_str} " · " <span class="touch-auto">{p_url}</span>
                         </p>
-                        {p_api_key.map(|k| view! {
-                            <p class="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                                "key " {mask_key(&k)}
+                        {p_has_api_key.then(|| view! {
+                            <p class="mt-0.5 text-[11px] text-muted-foreground">
+                                "API key saved (kept private)"
                             </p>
                         })}
                     </div>
@@ -954,6 +1101,15 @@ fn ProviderCard(
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
                     {move || if testing() { "Testing..." } else { "Test connection" }}
                 </button>
+                {move || match statuses.get().get(&p_id) {
+                    Some(ConnectionStatus::Connected) => Some(view! {
+                        <p role="status" class="mt-2 break-words text-xs text-green-600 dark:text-green-400">"Connection succeeded."</p>
+                    }.into_any()),
+                    Some(ConnectionStatus::Failed(reason)) => Some(view! {
+                        <p role="alert" class="mt-2 break-words text-xs text-destructive">{reason.clone()}</p>
+                    }.into_any()),
+                    _ => None,
+                }}
             </div>
         </div>
     }
@@ -991,11 +1147,4 @@ fn ProvidersSkeleton() -> impl IntoView {
             }).collect::<Vec<_>>()}
         </div>
     }
-}
-
-fn mask_key(key: &str) -> String {
-    if key.len() <= 8 {
-        return "••••".to_string();
-    }
-    format!("{}••••", &key[..4])
 }

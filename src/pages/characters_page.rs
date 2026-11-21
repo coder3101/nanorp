@@ -10,14 +10,17 @@ use crate::components::ui::field::Field;
 use crate::components::ui::modal::Modal;
 use crate::components::ui::toast::{use_toast, ToastVariant};
 use crate::models::character::{Character, NewCharacter, UpdateCharacter};
+use crate::models::chat::ChatSummary;
 use crate::server::character::{
     create_character, delete_character, generate_character, list_characters,
     remove_character_avatar, update_character, upload_character_avatar,
 };
+use crate::server::chat::{create_chat_session, list_chat_sessions};
 use leptos::callback::Callable;
 use leptos::html;
 use leptos::prelude::*;
 use leptos::wasm_bindgen::JsCast;
+use leptos_router::components::A;
 use uuid::Uuid;
 
 /// A pending avatar chosen in the dialog before it's uploaded.
@@ -49,6 +52,9 @@ pub fn CharactersPage() -> impl IntoView {
     let delete_dialog_open = RwSignal::new(false);
     let deleting_character = RwSignal::new(Option::<Character>::None);
     let saving = RwSignal::new(false);
+    // Only one new session may be created at a time. Keeping the character id
+    // lets the initiating card show progress while all cards reject repeat taps.
+    let starting_chat = RwSignal::new(Option::<Uuid>::None);
 
     let is_editing = Signal::derive(move || editing_character.get().is_some());
     let dialog_title = Signal::derive(move || {
@@ -121,7 +127,14 @@ pub fn CharactersPage() -> impl IntoView {
         ai_error.set(None);
         ai_success.set(None);
         ai_generating.set(false);
+        // Unmount the editor while this dialog is open so two Escape listeners
+        // are never active at once. All form state remains in page signals.
+        dialog_open.set(false);
         ai_open.set(true);
+    });
+    let close_ai = Callback::new(move |_: ()| {
+        ai_open.set(false);
+        dialog_open.set(true);
     });
 
     let open_create = Callback::new(move |_| {
@@ -212,6 +225,9 @@ pub fn CharactersPage() -> impl IntoView {
 
     let toast_save = toast.clone();
     let save_character = Callback::new(move |_| {
+        if saving.get_untracked() {
+            return;
+        }
         if form_name.get().trim().is_empty() {
             name_error.set(Some("Name is required".to_string()));
             return;
@@ -361,14 +377,21 @@ pub fn CharactersPage() -> impl IntoView {
 
     let toast_chat = toast.clone();
     let start_chat = Callback::new(move |character_id: Uuid| {
+        if starting_chat.get_untracked().is_some() {
+            return;
+        }
+        starting_chat.set(Some(character_id));
         let toast_inner = toast_chat.clone();
         leptos::task::spawn_local(async move {
-            match crate::server::chat::create_chat_session(character_id).await {
+            match create_chat_session(character_id).await {
                 Ok(session) => {
                     let navigate = leptos_router::hooks::use_navigate();
                     navigate(format!("/chat/{}", session.id).as_str(), Default::default());
                 }
-                Err(e) => toast_inner.error(format!("Couldn't start chat: {e}")),
+                Err(e) => {
+                    starting_chat.set(None);
+                    toast_inner.error(format!("Couldn't start chat: {e}. Try again."));
+                }
             }
         });
     });
@@ -386,7 +409,10 @@ pub fn CharactersPage() -> impl IntoView {
             };
             match create_character(copy).await {
                 Ok(c) => {
-                    toast_inner.success(format!("Duplicated as {}", c.name));
+                    toast_inner.success(format!(
+                        "Duplicated text fields as {} (avatar not copied)",
+                        c.name
+                    ));
                     version.update(|v| *v += 1);
                 }
                 Err(e) => toast_inner.error(format!("Duplicate failed: {e}")),
@@ -394,7 +420,7 @@ pub fn CharactersPage() -> impl IntoView {
         });
     });
 
-    // Download the character (without avatar) as a JSON file.
+    // Download the character text fields (without avatar) as a JSON file.
     let export_character = Callback::new(move |_char: Character| {
         #[cfg(feature = "hydrate")]
         {
@@ -471,11 +497,12 @@ pub fn CharactersPage() -> impl IntoView {
     view! {
         <div class="h-full overflow-y-auto scroll-area">
             <div class="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
-                // Page header
-                <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
+                // On mobile the actions are full-width and the search has its
+                // own row; on desktop everything settles into a compact toolbar.
+                <header class="mb-6 space-y-4 sm:mb-8">
                     <div>
                         <div class="flex items-center gap-2.5">
-                            <h1 class="text-3xl font-bold tracking-tight">"Characters"</h1>
+                            <h1 class="text-2xl font-bold tracking-tight sm:text-3xl">"Characters"</h1>
                             <Transition>
                                 {move || Suspend::new(async move {
                                     characters_res.await.ok().filter(|l| !l.is_empty()).map(|l| view! {
@@ -494,45 +521,48 @@ pub fn CharactersPage() -> impl IntoView {
                         type="file"
                         accept="application/json,.json"
                         class="hidden"
+                        aria-label="Import a text-only character JSON file"
                         node_ref=import_input
                         on:change=handle_import
                     />
-                    <Transition>
-                        {move || Suspend::new(async move {
-                            characters_res.await.ok().filter(|l| !l.is_empty()).map(|_| view! {
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <div class="relative">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
-                                             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                                             class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
-                                            <circle cx="11" cy="11" r="8"/>
-                                            <path d="m21 21-4.3-4.3"/>
-                                        </svg>
-                                        <input
-                                            type="search"
-                                            class=format!("{} h-10 w-48 pl-8", INPUT)
-                                            placeholder="Search..."
-                                            aria-label="Search characters"
-                                            prop:value=move || query.get()
-                                            on:input=move |ev| {
-                                                let input = ev.target().unwrap().unchecked_into::<leptos::web_sys::HtmlInputElement>();
-                                                query.set(input.value());
-                                            }
-                                        />
-                                    </div>
-                                    <button class=BTN_OUTLINE on:click=move |_| trigger_import.run(())>
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"/></svg>
-                                        "Import"
-                                    </button>
-                                    <button class=BTN_PRIMARY on:click=move |_| open_create.run(())>
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg>
-                                        "New character"
-                                    </button>
-                                </div>
-                            })
-                        })}
-                    </Transition>
-                </div>
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div class="relative w-full sm:max-w-xs">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24"
+                                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                 class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true">
+                                <circle cx="11" cy="11" r="8"/>
+                                <path d="m21 21-4.3-4.3"/>
+                            </svg>
+                            <input
+                                type="search"
+                                class=format!("{} h-11 pl-9", INPUT)
+                                placeholder="Search characters"
+                                aria-label="Search characters"
+                                prop:value=move || query.get()
+                                on:input=move |ev| {
+                                    let Some(target) = ev.target() else { return };
+                                    let input = target.unchecked_into::<leptos::web_sys::HtmlInputElement>();
+                                    query.set(input.value());
+                                }
+                            />
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 sm:flex">
+                            <button
+                                type="button"
+                                class=format!("{} min-h-11 px-3", BTN_OUTLINE)
+                                title="Import character text fields from JSON (avatars are not included)"
+                                on:click=move |_| trigger_import.run(())
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"/></svg>
+                                <span>"Import"<span class="hidden lg:inline">" JSON"</span></span>
+                            </button>
+                            <button type="button" class=format!("{} min-h-11 px-3", BTN_PRIMARY) on:click=move |_| open_create.run(())>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg>
+                                "New character"
+                            </button>
+                        </div>
+                    </div>
+                </header>
 
                 <Transition fallback=|| view! { <CharactersSkeleton /> }>
                     {move || Suspend::new(async move {
@@ -563,7 +593,7 @@ pub fn CharactersPage() -> impl IntoView {
                                             }.into_any()
                                         } else {
                                             view! {
-                                                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
                                                     {filtered.into_iter().map(|char| view! {
                                                         <CharacterCard
                                                             character=char
@@ -572,6 +602,7 @@ pub fn CharactersPage() -> impl IntoView {
                                                             on_delete=confirm_delete
                                                             on_duplicate=duplicate_character
                                                             on_export=export_character
+                                                            starting_chat=starting_chat
                                                         />
                                                     }).collect::<Vec<_>>()}
                                                 </div>
@@ -581,8 +612,16 @@ pub fn CharactersPage() -> impl IntoView {
                                 }.into_any()
                             }
                             Err(e) => view! {
-                                <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                                    "Failed to load characters: " {e.to_string()}
+                                <div role="alert" class="rounded-xl border border-destructive/30 bg-destructive/5 p-5">
+                                    <h2 class="text-sm font-semibold text-destructive">"Couldn't load characters"</h2>
+                                    <p class="mt-1 break-words text-sm text-muted-foreground">{e.to_string()}</p>
+                                    <button
+                                        type="button"
+                                        class=format!("{} mt-4 min-h-11", BTN_OUTLINE)
+                                        on:click=move |_| version.update(|value| *value += 1)
+                                    >
+                                        "Try again"
+                                    </button>
                                 </div>
                             }.into_any(),
                         }
@@ -593,7 +632,7 @@ pub fn CharactersPage() -> impl IntoView {
             // ---- Create / edit dialog ----
             <Modal open=dialog_open label=dialog_title class="max-w-lg" on_close=close_dialog>
                 // Avatar + title header
-                <div class="flex items-center gap-4 border-b border-border p-6">
+                <div class="flex items-center gap-4 border-b border-border p-4 sm:p-6">
                     <div class="relative shrink-0">
                         <Show
                             when=move || has_dialog_avatar.get()
@@ -618,15 +657,23 @@ pub fn CharactersPage() -> impl IntoView {
                         <h2 class="text-lg font-semibold">{dialog_title}</h2>
                         <p class="mt-0.5 text-sm text-muted-foreground">{dialog_subtitle}</p>
                         <div class="mt-2 flex items-center gap-2">
-                            <label class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-input bg-background px-2.5 text-xs font-medium shadow-sm transition-colors hover:bg-accent">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"/></svg>
-                                {move || if has_dialog_avatar.get() { "Change" } else { "Upload image" }}
-                                <input type="file" accept="image/*" class="hidden" on:change=pick_avatar.clone() />
+                            <label class="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-medium shadow-sm transition-colors focus-within:ring-2 focus-within:ring-ring hover:bg-accent">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4"/></svg>
+                                {move || if has_dialog_avatar.get() { "Change image" } else { "Upload image" }}
+                                // Kept focusable for keyboard users; the label provides the visible control and focus ring.
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    class="sr-only"
+                                    aria-label="Upload character avatar"
+                                    aria-describedby="avatar-upload-help"
+                                    on:change=pick_avatar.clone()
+                                />
                             </label>
                             <Show when=move || has_dialog_avatar.get()>
                                 <button
                                     type="button"
-                                    class="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+                                    class="inline-flex min-h-11 items-center gap-1.5 rounded-md px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
                                     on:click=move |_| {
                                         pending_avatar.set(None);
                                         avatar_cleared.set(true);
@@ -636,10 +683,11 @@ pub fn CharactersPage() -> impl IntoView {
                                 </button>
                             </Show>
                         </div>
+                        <p id="avatar-upload-help" class="mt-1.5 text-xs text-muted-foreground">"Optional image, up to 5 MB."</p>
                     </div>
                 </div>
 
-                <div class="space-y-4 p-6">
+                <div class="space-y-4 p-4 sm:p-6">
                     // Entry point to the Generate-with-AI dialog. Only offered
                     // when at least one provider is configured, and only when
                     // creating a character (not editing).
@@ -654,6 +702,11 @@ pub fn CharactersPage() -> impl IntoView {
                         </button>
                     </Show>
 
+                    <section class="space-y-4" aria-labelledby="character-basics-heading">
+                        <div>
+                            <h3 id="character-basics-heading" class="text-sm font-semibold">"The basics"</h3>
+                            <p class="mt-0.5 text-xs text-muted-foreground">"Enough to create a character and start chatting."</p>
+                        </div>
                     <Field
                         label="Name"
                         for_id="char-name"
@@ -700,7 +753,14 @@ pub fn CharactersPage() -> impl IntoView {
                             }
                         />
                     </Field>
+                    </section>
 
+                    <details class="group rounded-xl border border-border bg-muted/20 p-4 open:bg-background">
+                        <summary class="min-h-11 cursor-pointer list-none rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            <span class="text-sm font-semibold">"Advanced behavior"</span>
+                            <span class="mt-0.5 block text-xs font-normal text-muted-foreground">"Optional system prompt and opening message"</span>
+                        </summary>
+                        <div class="mt-4 space-y-4">
                     <Field label="System prompt" for_id="char-system-prompt" hint="Instructions for the AI. Supports {{char}} and {{user}}.">
                         <textarea
                             id="char-system-prompt"
@@ -726,13 +786,15 @@ pub fn CharactersPage() -> impl IntoView {
                             }
                         />
                     </Field>
+                        </div>
+                    </details>
                 </div>
 
-                <div class="flex justify-end gap-2 border-t border-border p-6 pt-4">
-                    <button class=BTN_OUTLINE on:click=move |_| close_dialog.run(())>
+                <div class="sticky bottom-0 z-10 flex flex-col-reverse gap-2 border-t border-border bg-card p-4 pt-4 sm:flex-row sm:justify-end sm:p-6 sm:pt-4">
+                    <button type="button" class=format!("{} min-h-11 w-full sm:w-auto", BTN_OUTLINE) on:click=move |_| close_dialog.run(())>
                         "Cancel"
                     </button>
-                    <button class=BTN_PRIMARY disabled=move || saving.get() on:click=move |_| save_character.run(())>
+                    <button type="button" class=format!("{} min-h-11 w-full sm:w-auto", BTN_PRIMARY) disabled=move || saving.get() on:click=move |_| save_character.run(())>
                         {move || if saving.get() {
                             "Saving...".to_string()
                         } else if is_editing.get() {
@@ -761,27 +823,28 @@ pub fn CharactersPage() -> impl IntoView {
                         }).unwrap_or_default()
                     }}
                 </p>
-                <div class="mt-6 flex justify-end gap-2">
+                <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                     <button
-                        class=BTN_OUTLINE
+                        type="button"
+                        class=format!("{} min-h-11", BTN_OUTLINE)
                         on:click=move |_| { delete_dialog_open.set(false); deleting_character.set(None); }
                     >
                         "Cancel"
                     </button>
-                    <button class=BTN_DESTRUCTIVE on:click=move |_| do_delete.run(())>
+                    <button type="button" class=format!("{} min-h-11", BTN_DESTRUCTIVE) on:click=move |_| do_delete.run(())>
                         "Delete"
                     </button>
                 </div>
             </Modal>
 
             // ---- Generate-with-AI dialog ----
-            // Its own popup so the create form stays focused on manual entry.
-            // The description, model picker, and generation lifecycle all live
-            // here; a successful draft is dropped into the create form.
+            // The editor is temporarily unmounted while this popup is open, so
+            // Escape only closes one layer. Its fields survive in page signals.
             <Modal
                 open=ai_open
                 label=Signal::derive(|| "Generate with AI".to_string())
                 class="w-full max-w-md p-0 sm:p-0"
+                on_close=close_ai
             >
                 <div class="flex items-start justify-between gap-4 border-b border-border p-5 sm:p-6">
                     <div class="flex items-start gap-3">
@@ -797,9 +860,9 @@ pub fn CharactersPage() -> impl IntoView {
                     </div>
                     <button
                         type="button"
-                        class="-mr-1 -mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        class="-mr-1 -mt-1 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         aria-label="Close"
-                        on:click=move |_| ai_open.set(false)
+                        on:click=move |_| close_ai.run(())
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                     </button>
@@ -848,7 +911,7 @@ pub fn CharactersPage() -> impl IntoView {
                     <button
                         type="button"
                         class=BTN_OUTLINE
-                        on:click=move |_| ai_open.set(false)
+                        on:click=move |_| close_ai.run(())
                     >
                         "Close"
                     </button>
@@ -887,7 +950,7 @@ pub fn CharactersPage() -> impl IntoView {
                         <button
                             type="button"
                             class=BTN_PRIMARY
-                            on:click=move |_| ai_open.set(false)
+                            on:click=move |_| close_ai.run(())
                         >
                             "Use these details"
                         </button>
@@ -1022,6 +1085,7 @@ fn CharacterCard(
     on_delete: Callback<Character>,
     on_duplicate: Callback<Character>,
     on_export: Callback<Character>,
+    #[prop(into)] starting_chat: Signal<Option<Uuid>>,
 ) -> impl IntoView {
     let id = character.id;
     let name = character.name.clone();
@@ -1035,13 +1099,37 @@ fn CharacterCard(
     let for_delete = character.clone();
     let for_duplicate = character.clone();
     let for_export = character.clone();
+    let recent_res =
+        LocalResource::new(move || async move { list_chat_sessions(Some(id), None, 1, 0).await });
+    let recent_chat = Signal::derive(move || {
+        recent_res
+            .get()
+            .and_then(|result| result.ok())
+            .and_then(|mut sessions| {
+                if sessions.is_empty() {
+                    None
+                } else {
+                    Some(sessions.remove(0))
+                }
+            })
+    });
 
     view! {
+        <MobileCharacterCard
+            character=character.clone()
+            on_start=on_start
+            on_edit=on_edit
+            on_delete=on_delete
+            on_duplicate=on_duplicate
+            on_export=on_export
+            starting_chat=starting_chat
+            recent_chat=recent_chat
+        />
         // No `overflow-hidden` here: the actions dropdown opens downward from the
         // bottom edge of this card and would be clipped away. `focus-within:z-20`
         // lifts the card (and the open menu) above its neighbours, which matters
         // because the hover transform makes this card its own stacking context.
-        <div class="group relative flex flex-col rounded-xl border border-border bg-card text-card-foreground shadow-sm transition-all focus-within:z-20 hover:-translate-y-0.5 hover:shadow-md">
+        <div class="group relative hidden flex-col rounded-xl border border-border bg-card text-card-foreground shadow-sm transition-all focus-within:z-20 hover:-translate-y-0.5 hover:shadow-md sm:flex">
             // Banner + avatar
             <div class="relative h-16 rounded-t-xl bg-gradient-to-r from-muted to-accent">
                 {if has_avatar {
@@ -1074,13 +1162,31 @@ fn CharacterCard(
                     {personality.unwrap_or_else(|| "No personality description yet.".to_string())}
                 </p>
 
+                <Show when=move || recent_chat.get().is_some()>
+                    <A
+                        href=move || recent_chat.get().map(|chat| format!("/chat/{}", chat.session_id)).unwrap_or_else(|| "/characters".to_string())
+                        attr:title=move || recent_chat.get().map(|chat| chat.title.filter(|title| !title.trim().is_empty()).unwrap_or(chat.character_name)).unwrap_or_default()
+                        attr:class="mb-2 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-input bg-background px-3 text-sm font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                        "Continue recent"
+                    </A>
+                </Show>
                 <div class="mt-4 flex items-center gap-2">
                     <button
-                        class="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
+                        type="button"
+                        class="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-60"
+                        disabled=move || starting_chat.get().is_some()
+                        attr:aria-busy=move || (starting_chat.get() == Some(id)).to_string()
                         on:click=move |_| on_start.run(id)
                     >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
-                        "Chat"
+                        <Show
+                            when=move || starting_chat.get() == Some(id)
+                            fallback=|| view! { <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg> }
+                        >
+                            <svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                        </Show>
+                        {move || if starting_chat.get() == Some(id) { "Starting…" } else { "New chat" }}
                     </button>
                     <button
                         class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-background text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
@@ -1106,13 +1212,13 @@ fn CharacterCard(
                                     <DropdownMenuItem on_select=Callback::new(move |_| on_duplicate.run(for_duplicate.clone()))>
                                         <span class="flex items-center gap-2">
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                                            "Duplicate"
+                                            "Duplicate text only"
                                         </span>
                                     </DropdownMenuItem>
                                     <DropdownMenuItem on_select=Callback::new(move |_| on_export.run(for_export.clone()))>
                                         <span class="flex items-center gap-2">
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
-                                            "Export JSON"
+                                            "Export text-only JSON"
                                         </span>
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
@@ -1122,7 +1228,7 @@ fn CharacterCard(
                                     >
                                         <span class="flex items-center gap-2">
                                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                                            "Delete"
+                                            "Delete character"
                                         </span>
                                     </DropdownMenuItem>
                                 }
@@ -1132,6 +1238,114 @@ fn CharacterCard(
                 </div>
             </div>
         </div>
+    }
+}
+
+/// Compact, touch-friendly presentation for narrow screens. The full banner
+/// card remains the desktop layout above.
+#[component]
+fn MobileCharacterCard(
+    character: Character,
+    on_start: Callback<Uuid>,
+    on_edit: Callback<Character>,
+    on_delete: Callback<Character>,
+    on_duplicate: Callback<Character>,
+    on_export: Callback<Character>,
+    #[prop(into)] starting_chat: Signal<Option<Uuid>>,
+    #[prop(into)] recent_chat: Signal<Option<ChatSummary>>,
+) -> impl IntoView {
+    let id = character.id;
+    let name = character.name.clone();
+    let avatar_url = character.avatar_path.clone().map(|path| format!("/{path}"));
+    let for_edit = character.clone();
+    let for_delete = character.clone();
+    let for_duplicate = character.clone();
+    let for_export = character.clone();
+
+    view! {
+        <article class="relative rounded-xl border border-border bg-card p-3 text-card-foreground shadow-sm focus-within:z-20 sm:hidden">
+            <div class="flex min-w-0 items-center gap-3">
+                {match avatar_url.clone() {
+                    Some(url) => view! { <img src=url alt="" class="h-12 w-12 shrink-0 rounded-full object-cover" /> }.into_any(),
+                    None => view! {
+                        <div class=format!("flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br {} text-lg font-semibold text-white", avatar_gradient(&character.name))>
+                            {initial(&character.name)}
+                        </div>
+                    }.into_any(),
+                }}
+                <div class="min-w-0 flex-1">
+                    <h2 class="truncate text-base font-semibold" title=name.clone()>{name.clone()}</h2>
+                    <p class="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                        {character.role.clone().filter(|role| !role.trim().is_empty()).unwrap_or_else(|| "No role description".to_string())}
+                    </p>
+                </div>
+                <div class="flex shrink-0 items-center gap-1">
+                    <button
+                        type="button"
+                        class="inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        aria-label="Edit character"
+                        on:click=move |_| on_edit.run(for_edit.clone())
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
+                    </button>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger class="inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+                            <span class="sr-only">"More character actions"</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align=DropdownAlign::End>
+                            {
+                                let for_duplicate = for_duplicate.clone();
+                                let for_export = for_export.clone();
+                                let for_delete = for_delete.clone();
+                                view! {
+                                    <DropdownMenuItem on_select=Callback::new(move |_| on_duplicate.run(for_duplicate.clone()))>
+                                        <span class="flex items-center gap-2">"Duplicate text only"</span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem on_select=Callback::new(move |_| on_export.run(for_export.clone()))>
+                                        <span class="flex items-center gap-2">"Export text-only JSON"</span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                        class="text-destructive focus:bg-destructive focus:text-destructive-foreground hover:bg-destructive hover:text-destructive-foreground"
+                                        on_select=Callback::new(move |_| on_delete.run(for_delete.clone()))
+                                    >
+                                        <span class="flex items-center gap-2">"Delete character"</span>
+                                    </DropdownMenuItem>
+                                }
+                            }
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </div>
+            </div>
+            <div class="mt-3 flex gap-2">
+                <button
+                    type="button"
+                    class="inline-flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-60"
+                    disabled=move || starting_chat.get().is_some()
+                    attr:aria-busy=move || (starting_chat.get() == Some(id)).to_string()
+                    on:click=move |_| on_start.run(id)
+                >
+                    <Show
+                        when=move || starting_chat.get() == Some(id)
+                        fallback=|| view! { <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg> }
+                    >
+                        <svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    </Show>
+                    {move || if starting_chat.get() == Some(id) { "Starting…" } else { "New chat" }}
+                </button>
+                <Show when=move || recent_chat.get().is_some()>
+                    <A
+                        href=move || recent_chat.get().map(|chat| format!("/chat/{}", chat.session_id)).unwrap_or_else(|| "/characters".to_string())
+                        attr:title=move || recent_chat.get().map(|chat| chat.title.filter(|title| !title.trim().is_empty()).unwrap_or(chat.character_name)).unwrap_or_default()
+                        attr:class="inline-flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-input bg-background px-3 text-sm font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                        "Continue"
+                    </A>
+                </Show>
+            </div>
+        </article>
     }
 }
 
@@ -1146,13 +1360,13 @@ fn CharactersEmpty(on_create: Callback<()>, on_import: Callback<()>) -> impl Int
             <p class="mt-1.5 max-w-sm text-sm text-muted-foreground">
                 "Characters are the personas you roleplay with. Give one a name and personality to start chatting."
             </p>
-            <div class="mt-6 flex items-center gap-2">
-                <button class=BTN_PRIMARY on:click=move |_| on_create.run(())>
+            <div class="mt-6 flex w-full max-w-xs flex-col gap-2 px-4 sm:w-auto sm:max-w-none sm:flex-row sm:px-0">
+                <button type="button" class=format!("{} min-h-11", BTN_PRIMARY) on:click=move |_| on_create.run(())>
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"/></svg>
                     "New character"
                 </button>
-                <button class=BTN_OUTLINE on:click=move |_| on_import.run(())>
-                    "Import JSON"
+                <button type="button" class=format!("{} min-h-11", BTN_OUTLINE) on:click=move |_| on_import.run(())>
+                    "Import text-only JSON"
                 </button>
             </div>
         </div>
@@ -1162,11 +1376,12 @@ fn CharactersEmpty(on_create: Callback<()>, on_import: Callback<()>) -> impl Int
 #[component]
 fn CharactersSkeleton() -> impl IntoView {
     view! {
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
             {(0..4).map(|_| view! {
-                <div class="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-                    <div class="h-16 animate-pulse bg-muted"></div>
-                    <div class="p-5 pt-9">
+                <div class="overflow-hidden rounded-xl border border-border bg-card p-3 shadow-sm sm:p-0">
+                    <div class="h-12 w-12 animate-pulse rounded-full bg-muted sm:hidden"></div>
+                    <div class="hidden h-16 animate-pulse bg-muted sm:block"></div>
+                    <div class="hidden p-5 pt-9 sm:block">
                         <div class="h-4 w-1/2 animate-pulse rounded bg-muted"></div>
                         <div class="mt-2 h-3 w-1/3 animate-pulse rounded bg-muted"></div>
                         <div class="mt-4 h-3 w-full animate-pulse rounded bg-muted"></div>

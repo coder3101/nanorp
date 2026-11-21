@@ -16,6 +16,7 @@ async fn main() {
     use nanorp::app::*;
     use nanorp::config;
     use nanorp::db::Db;
+    use nanorp::models::message::MAX_CHAT_REQUEST_BODY_BYTES;
     use tower_http::services::ServeDir;
 
     tracing_subscriber::fmt::init();
@@ -52,7 +53,8 @@ async fn main() {
             },
         )
         .fallback(leptos_axum::file_and_error_handler(shell))
-        .layer(DefaultBodyLimit::max(20 * 1024 * 1024)) // 20 MB for image uploads
+        // Matches five maximum-size images after base64/JSON expansion.
+        .layer(DefaultBodyLimit::max(MAX_CHAT_REQUEST_BODY_BYTES))
         .with_state(leptos_options);
 
     log!("listening on http://{}", &addr);

@@ -3,6 +3,7 @@ use crate::components::sidebar::nav::Nav;
 use crate::components::ui::toast::use_toast;
 use crate::models::chat::ChatSummary;
 use crate::server::chat::{delete_chat_session, list_chat_sessions};
+use crate::services::generation_tracker::use_generation_tracker;
 use leptos::callback::Callable;
 use leptos::prelude::*;
 use leptos::wasm_bindgen::JsCast;
@@ -19,8 +20,13 @@ const SEARCH_DEBOUNCE_MS: u64 = 250;
 pub fn Sidebar(
     #[prop(optional)] on_navigate: Option<Callback<()>>,
     #[prop(optional)] current_session_id: Signal<Option<Uuid>>,
+    /// When set (mobile drawer), a close button is shown in the header. Desktop
+    /// leaves it unset, so no close affordance is rendered there.
+    #[prop(optional)]
+    on_close: Option<Callback<()>>,
 ) -> impl IntoView {
     let toast = use_toast();
+    let generation = use_generation_tracker();
 
     // The pages loaded so far, newest first.
     let chats = RwSignal::new(Vec::<ChatSummary>::new());
@@ -96,6 +102,9 @@ pub fn Sidebar(
         let _ = current_session_id.get();
         let _ = applied_query.get();
         let _ = refetch.get();
+        // A finished generation may have auto-titled the session and changed
+        // its preview and ordering, even when the finished-map size is stable.
+        let _ = generation.finished.get();
         reload();
     });
 
@@ -133,8 +142,10 @@ pub fn Sidebar(
         Signal::derive(move || !chats.get().is_empty() || !query.get().trim().is_empty());
 
     let empty_text = Signal::derive(move || {
-        if loading.get() {
+        if loading.get() && chats.get().is_empty() {
             "Loading conversations…".to_string()
+        } else if load_error.get().is_some() && chats.get().is_empty() {
+            "Conversations are unavailable right now. Try again above.".to_string()
         } else if query.get().trim().is_empty() {
             "No conversations yet. Select a character to start chatting.".to_string()
         } else {
@@ -148,15 +159,26 @@ pub fn Sidebar(
         notify.run(());
     };
 
+    let on_renamed = Callback::new(move |_| refetch.update(|value| *value += 1));
+
     // Delete a conversation: call the backend, refetch, and navigate away if
-    // the deleted conversation is the one currently open.
+    // the deleted conversation is the one currently open. Only one delete may
+    // be in flight, which also makes repeated confirmation clicks harmless.
+    let deleting_id = RwSignal::new(None::<Uuid>);
     let on_delete = Callback::new(move |session_id: Uuid| {
+        if deleting_id.get_untracked().is_some() {
+            return;
+        }
+        deleting_id.set(Some(session_id));
         let toast = toast.clone();
         leptos::task::spawn_local(async move {
-            match delete_chat_session(session_id).await {
+            let result = delete_chat_session(session_id).await;
+            deleting_id.set(None);
+            match result {
                 Ok(()) => {
                     toast.success("Conversation deleted");
                     if current_session_id.get_untracked() == Some(session_id) {
+                        notify.run(());
                         let navigate = leptos_router::hooks::use_navigate();
                         navigate("/characters", Default::default());
                     }
@@ -169,12 +191,33 @@ pub fn Sidebar(
 
     view! {
         <div class="flex h-full flex-col border-r border-border bg-muted/40">
-            <A href="/" attr:class="flex h-14 items-center gap-2 border-b border-border px-4 no-underline">
-                // Simplified mark, not the full logo: at nav size the detailed
-                // artwork is illegible.
-                <img src="/mark.png" alt="" class="h-5 w-auto shrink-0" />
-                <h1 class="font-semibold text-lg tracking-tight text-foreground">"NanoRP"</h1>
-            </A>
+            <div class="flex h-14 items-center border-b border-border pl-4 pr-2">
+                <A
+                    href="/"
+                    attr:class="flex min-w-0 flex-1 items-center gap-2 no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    on:click=move |_| notify.run(())
+                >
+                    // Simplified mark, not the full logo: at nav size the detailed
+                    // artwork is illegible.
+                    <img src="/mark.png" alt="" class="h-5 w-auto shrink-0" />
+                    <h1 class="font-semibold text-lg tracking-tight text-foreground">"NanoRP"</h1>
+                </A>
+                {on_close.map(|close| view! {
+                    <button
+                        type="button"
+                        class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Close menu"
+                        on:click=move |_| close.run(())
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                             stroke-linejoin="round" aria-hidden="true">
+                            <path d="M18 6 6 18"/>
+                            <path d="m6 6 12 12"/>
+                        </svg>
+                    </button>
+                })}
+            </div>
 
             <div class="p-3">
                 <A
@@ -182,7 +225,7 @@ pub fn Sidebar(
                     attr:class="inline-flex w-full items-center justify-center gap-2 rounded-lg text-sm font-medium \
                            transition-colors focus-visible:outline-none focus-visible:ring-2 \
                            focus-visible:ring-ring bg-primary text-primary-foreground shadow \
-                           hover:bg-primary/90 h-10 px-4 no-underline"
+                           hover:bg-primary/90 min-h-11 px-4 no-underline"
                     on:click=on_new_chat
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
@@ -206,7 +249,7 @@ pub fn Sidebar(
                         </svg>
                         <input
                             type="search"
-                            class="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-sm \
+                            class="h-11 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-sm \
                                    shadow-sm transition-colors placeholder:text-muted-foreground \
                                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             placeholder="Search chats..."
@@ -218,36 +261,37 @@ pub fn Sidebar(
                 </div>
             </Show>
 
-            <div class="flex-1 overflow-hidden">
-                <Show
-                    when=move || load_error.get().is_none()
-                    fallback=move || view! {
-                        <div class="mx-3 mt-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
-                            <p class="font-medium text-destructive">"Couldn't load conversations"</p>
-                            <p class="mt-0.5 break-words text-xs text-muted-foreground">
-                                {move || load_error.get().unwrap_or_default()}
-                            </p>
-                            <button
-                                class="mt-2 inline-flex h-7 items-center rounded-md border border-input bg-background \
-                                       px-2.5 text-xs font-medium shadow-sm transition-colors hover:bg-accent"
-                                on:click=move |_| refetch.update(|v| *v += 1)
-                            >
-                                "Retry"
-                            </button>
-                        </div>
-                    }
-                >
-                    <ChatList
-                        current_session_id=current_session_id
-                        on_select=notify
-                        on_delete=on_delete
-                        chats=chats
-                        empty_text=empty_text
-                        has_more=has_more
-                        loading=loading
-                        on_load_more=load_more
-                    />
+            <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+                // Keep already-loaded rows usable when a refresh or a later page
+                // fails, rather than replacing the whole list with an error.
+                <Show when=move || load_error.get().is_some()>
+                    <div role="alert" class="mx-3 mt-2 shrink-0 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                        <p class="font-medium text-destructive">"Couldn't load conversations"</p>
+                        <p class="mt-0.5 break-words text-xs text-muted-foreground">
+                            {move || load_error.get().unwrap_or_default()}
+                        </p>
+                        <button
+                            type="button"
+                            class="mt-2 inline-flex min-h-11 items-center rounded-md border border-input bg-background px-4 text-xs font-medium shadow-sm transition-colors hover:bg-accent disabled:opacity-60"
+                            disabled=move || loading.get()
+                            on:click=move |_| refetch.update(|v| *v += 1)
+                        >
+                            {move || if loading.get() { "Retrying…" } else { "Try again" }}
+                        </button>
+                    </div>
                 </Show>
+                <ChatList
+                    current_session_id=current_session_id
+                    on_select=notify
+                    on_delete=on_delete
+                    deleting_id=deleting_id
+                    on_renamed=on_renamed
+                    chats=chats
+                    empty_text=empty_text
+                    has_more=has_more
+                    loading=loading
+                    on_load_more=load_more
+                />
             </div>
 
             <div class="border-t border-border p-2">

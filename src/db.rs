@@ -104,7 +104,45 @@ impl Db {
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/001_initial_schema.sql"),
     include_str!("../migrations/002_session_list_indexes.sql"),
+    include_str!("../migrations/003_message_sequence.sql"),
 ];
+
+#[cfg(test)]
+pub(crate) struct TestConfigDir {
+    previous_xdg: Option<std::ffi::OsString>,
+    root: std::path::PathBuf,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl TestConfigDir {
+    pub(crate) fn new() -> Self {
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let lock = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let previous_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        let root = std::path::Path::new("/tmp/opencode")
+            .join(format!("nanorp-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", &root);
+        config::ensure_dirs().unwrap();
+        Self {
+            previous_xdg,
+            root,
+            _lock: lock,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestConfigDir {
+    fn drop(&mut self) {
+        match &self.previous_xdg {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -125,6 +163,55 @@ mod tests {
         db.run_migrations().unwrap();
         db.run_migrations().unwrap();
         assert_eq!(db.current_version().unwrap(), Db::latest_version());
+    }
+
+    #[test]
+    fn message_sequence_migration_preserves_existing_timestamp_order() {
+        let db = Db::open_in_memory().unwrap();
+        {
+            let conn = db.conn();
+            let conn = conn.lock().unwrap();
+            for sql in MIGRATIONS.iter().take(2) {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 2).unwrap();
+            conn.execute(
+                "INSERT INTO characters (id, name, created_at, updated_at) VALUES ('c', 'C', 'now', 'now')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO chat_sessions (id, character_id, created_at, updated_at) VALUES ('s', 'c', 'now', 'now')",
+                [],
+            )
+            .unwrap();
+            for (id, content) in [("b", "first"), ("a", "second")] {
+                conn.execute(
+                    "INSERT INTO messages (id, session_id, role, content, created_at)
+                     VALUES (?1, 's', 'user', ?2, '2026-01-01T00:00:00Z')",
+                    rusqlite::params![id, content],
+                )
+                .unwrap();
+            }
+        }
+
+        db.run_migrations().unwrap();
+        let conn = db.conn();
+        let conn = conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT content, sequence FROM messages ORDER BY sequence")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![("first".to_string(), 1), ("second".to_string(), 2)]
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@ use leptos::prelude::*;
 use leptos::server_fn::codec::{Json, StreamingText, TextStream};
 use uuid::Uuid;
 
-use crate::models::chat::{ChatSession, ChatSummary};
+use crate::models::chat::{ChatExportFile, ChatExportFormat, ChatSession, ChatSummary};
 use crate::models::message::{ImageUpload, Message};
 
 #[server(CreateChatSession, "/api")]
@@ -46,6 +46,50 @@ pub async fn get_chat_session(id: Uuid) -> Result<Option<ChatSession>, ServerFnE
         .await
         .map_err(|e| ServerFnError::new(format!("Task failed: {e}")))?
         .map_err(|e| ServerFnError::new(format!("Failed to load session: {e}")))
+}
+
+/// Rename a conversation. The service trims whitespace, rejects blank or
+/// overlong titles, and confirms the session exists before returning it.
+#[server(RenameChatSession, "/api")]
+pub async fn rename_chat_session(
+    session_id: Uuid,
+    title: String,
+) -> Result<ChatSession, ServerFnError> {
+    use crate::db::Db;
+    use crate::services::chat_service::ChatService;
+
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    tokio::task::spawn_blocking(move || ChatService::new(db).rename_session(session_id, &title))
+        .await
+        .map_err(|e| ServerFnError::new(format!("Task failed: {e}")))?
+        .map_err(|e| ServerFnError::new(format!("Failed to rename session: {e}")))
+}
+
+/// Produce a text-only download. Image attachments are represented by their
+/// metadata in both JSON and Markdown; image files are never read or encoded.
+#[server(ExportChatSession, "/api", input = Json)]
+pub async fn export_chat_session(
+    session_id: Uuid,
+    format: ChatExportFormat,
+) -> Result<ChatExportFile, ServerFnError> {
+    use crate::db::Db;
+    use crate::services::character_service::CharacterService;
+    use crate::services::chat_service::ChatService;
+
+    let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
+    tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let chat = ChatService::new(db.clone());
+        let session = chat
+            .get_session(session_id)?
+            .ok_or_else(|| anyhow::anyhow!("Chat session not found"))?;
+        let character = CharacterService::new(db)
+            .get(session.character_id)?
+            .ok_or_else(|| anyhow::anyhow!("Character not found"))?;
+        chat.export_session(session_id, &character, format)
+    })
+    .await
+    .map_err(|e| ServerFnError::new(format!("Task failed: {e}")))?
+    .map_err(|e| ServerFnError::new(format!("Failed to export session: {e}")))
 }
 
 /// One newest-first page of conversations. `query` searches character names,
@@ -138,8 +182,9 @@ pub async fn stream_chat_reply(
     stream_reply(db, session_id, provider_id, model).await
 }
 
-/// Regenerate the assistant's reply: remove the trailing assistant message(s)
-/// after the last user message, then re-stream from the existing history.
+/// Regenerate only the latest assistant response immediately after a user
+/// message, or start from an edited user turn. Greetings, older responses, and
+/// consecutive assistant messages cannot be used as regeneration targets.
 #[server(StreamRegenerate, "/api", input = Json, output = StreamingText)]
 pub async fn stream_regenerate(
     session_id: Uuid,
@@ -147,26 +192,15 @@ pub async fn stream_regenerate(
     model: String,
 ) -> Result<TextStream, ServerFnError> {
     use crate::db::Db;
-    use crate::models::message::MessageRole;
     use crate::services::chat_service::ChatService;
 
     let db = use_context::<Db>().ok_or_else(|| ServerFnError::new("Database is not available"))?;
 
-    // Delete trailing assistant messages so the prompt ends on the user turn.
+    // Atomically validate the latest turn and remove at most its response.
     {
         let db = db.clone();
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let chat = ChatService::new(db);
-            let msgs = chat.list_messages(session_id)?;
-            // Remove trailing assistant messages from the end.
-            for msg in msgs.iter().rev() {
-                if msg.role == MessageRole::Assistant {
-                    chat.delete_message(msg.id)?;
-                } else {
-                    break;
-                }
-            }
-            Ok(())
+            ChatService::new(db).prepare_regenerate(session_id)
         })
         .await
         .map_err(|e| ServerFnError::new(format!("Task failed: {e}")))?
@@ -201,12 +235,7 @@ pub async fn edit_user_message(
 
     tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let chat = ChatService::new(db);
-        let msg = chat
-            .get_message(message_id)?
-            .ok_or_else(|| anyhow::anyhow!("Message not found"))?;
-        chat.update_message_content(message_id, &content)?;
-        chat.replace_message_attachments(message_id, &keep_attachment_ids, &new_images)?;
-        chat.delete_messages_after(msg.session_id, message_id)?;
+        chat.edit_user_message(message_id, &content, &keep_attachment_ids, &new_images)?;
         Ok(())
     })
     .await
@@ -216,8 +245,8 @@ pub async fn edit_user_message(
 
 /// Cancel the in-flight generation for a session, if any. The server aborts
 /// the provider request and persists whatever partial reply was streamed so
-/// far; the client's stream then ends normally. Returns whether a generation
-/// was active.
+/// far; the client's stream then ends with a `stopped` terminal receipt.
+/// Returns whether a generation was active.
 #[server(StopGeneration, "/api")]
 pub async fn stop_generation(session_id: Uuid) -> Result<bool, ServerFnError> {
     use crate::services::generation;
@@ -271,13 +300,9 @@ async fn stream_reply(
     };
 
     let llm = build_provider(&provider);
-    let mut token_stream = llm
-        .stream_chat(prompt, &model, &sampling)
-        .await
-        .map_err(|e| ServerFnError::new(format!("Provider error: {e}")))?;
 
-    // Register with the cancellation registry so `stop_generation` can abort
-    // this generation (and so a newer generation for the session replaces it).
+    // Register before awaiting the provider. Cancellation also races the
+    // initial connection / response-headers / first-byte wait below.
     let (generation_id, mut cancel_rx) = crate::services::generation::begin(session_id);
 
     // Channel that forwards streamed chunks from the background generation to
@@ -291,18 +316,20 @@ async fn stream_reply(
     // closed) the response stream below is dropped, but this task keeps
     // accumulating and persists the reply so it is never lost from history.
     tokio::spawn(async move {
+        use crate::models::message::{
+            GenerationOutcome, GenerationReceipt, GENERATION_TERMINAL_PREFIX,
+        };
+
         // Deregisters this generation when the task ends, whether it completes
         // naturally, is cancelled, or is replaced by a newer generation.
         let _finish_guard =
             crate::services::generation::FinishGuard::new(session_id, generation_id);
-
         let mut accumulated = String::new();
-        // Reasoning tokens from a dedicated API field are wrapped in
-        //  thinking... response so the client renders them as a collapsible block.
+        let mut outcome = GenerationOutcome::Completed;
+        let mut error: Option<String> = None;
         let mut in_reasoning = false;
 
-        // Push a chunk to the connected client (if any) and accumulate it for
-        // persistence. Send errors mean the client is gone — still accumulate.
+        // Only legitimate assistant text is forwarded and accumulated here.
         macro_rules! forward {
             ($text:expr) => {{
                 let t = $text;
@@ -311,63 +338,80 @@ async fn stream_reply(
             }};
         }
 
-        loop {
-            // Race the next provider token against cancellation. `changed()`
-            // resolves on an explicit stop request, or with Err when a newer
-            // generation for this session drops our sender — both mean stop.
-            // (Yields live outside the select arms: async-stream can't expand
-            // `yield` inside another macro's body.)
-            let next = tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => None,
-                ev = token_stream.next() => Some(ev),
-            };
+        let connected = tokio::select! {
+            biased;
+            _ = cancel_rx.changed() => {
+                outcome = GenerationOutcome::Stopped;
+                None
+            },
+            result = llm.stream_chat(prompt, &model, &sampling) => Some(result),
+        };
+        let token_stream = match connected {
+            None => None,
+            Some(Ok(stream)) => Some(stream),
+            Some(Err(e)) => {
+                tracing::error!("provider connection error (session {session_id}): {e}");
+                outcome = GenerationOutcome::Failed;
+                error = Some(format!("Could not connect to the provider: {e}"));
+                None
+            }
+        };
 
-            let Some(ev) = next else {
-                tracing::info!("generation cancelled (session {session_id})");
-                break;
-            };
-            let Some(ev) = ev else { break };
+        if let Some(mut token_stream) = token_stream {
+            loop {
+                let next = tokio::select! {
+                    biased;
+                    _ = cancel_rx.changed() => None,
+                    ev = token_stream.next() => Some(ev),
+                };
 
-            match ev {
-                Ok(StreamEvent::Reasoning(chunk)) => {
-                    if !in_reasoning {
-                        in_reasoning = true;
-                        forward!(" thinking".to_string());
-                    }
-                    forward!(chunk);
-                }
-                Ok(StreamEvent::Delta(chunk)) => {
-                    if in_reasoning {
-                        in_reasoning = false;
-                        forward!(" response".to_string());
-                    }
-                    forward!(chunk);
-                }
-                Ok(StreamEvent::Done) => break,
-                // Error text is shown to the client but intentionally NOT
-                // accumulated, so it never gets persisted as message content.
-                Ok(StreamEvent::Error(e)) => {
-                    tracing::error!("provider stream error (session {session_id}): {e}");
-                    let _ = chunk_tx.send(format!("\n\n[error: {e}]")).await;
+                let Some(ev) = next else {
+                    tracing::info!("generation cancelled (session {session_id})");
+                    outcome = GenerationOutcome::Stopped;
                     break;
-                }
-                Err(e) => {
-                    tracing::error!("provider stream error (session {session_id}): {e}");
-                    let _ = chunk_tx.send(format!("\n\n[error: {e}]")).await;
-                    break;
+                };
+                let Some(ev) = ev else { break };
+
+                match ev {
+                    Ok(StreamEvent::Reasoning(chunk)) => {
+                        if !in_reasoning {
+                            in_reasoning = true;
+                            // Wrap reasoning in `<think>` tags, which the UI
+                            // parses into the collapsible "Reasoning" panel.
+                            forward!("<think>".to_string());
+                        }
+                        forward!(chunk);
+                    }
+                    Ok(StreamEvent::Delta(chunk)) => {
+                        if in_reasoning {
+                            in_reasoning = false;
+                            forward!("</think>".to_string());
+                        }
+                        forward!(chunk);
+                    }
+                    Ok(StreamEvent::Done) => break,
+                    Ok(StreamEvent::Error(e)) => {
+                        tracing::error!("provider stream error (session {session_id}): {e}");
+                        outcome = GenerationOutcome::Failed;
+                        error = Some(format!("The provider stopped the response: {e}"));
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::error!("provider stream error (session {session_id}): {e}");
+                        outcome = GenerationOutcome::Failed;
+                        error = Some(format!("The provider connection failed: {e}"));
+                        break;
+                    }
                 }
             }
+            drop(token_stream);
         }
-
-        // Dropping the provider stream aborts the upstream HTTP request, so
-        // the provider stops generating immediately after cancellation.
-        drop(token_stream);
 
         if in_reasoning {
-            forward!(" response".to_string());
+            forward!("</think>".to_string());
         }
 
+        let mut persisted = false;
         if !accumulated.trim().is_empty() {
             let db = db.clone();
             let content = accumulated.clone();
@@ -384,17 +428,34 @@ async fn stream_reply(
             })
             .await;
             match save_result {
-                Ok(Ok(_)) => {}
+                Ok(Ok(_)) => persisted = true,
                 Ok(Err(e)) => {
                     tracing::error!("failed to save assistant message (session {session_id}): {e}");
+                    outcome = GenerationOutcome::Failed;
+                    error = Some("The response could not be saved. Please try again.".to_string());
                 }
                 Err(e) => {
                     tracing::error!(
                         "assistant message save task panicked (session {session_id}): {e}"
                     );
+                    outcome = GenerationOutcome::Failed;
+                    error = Some("The response could not be saved. Please try again.".to_string());
                 }
             }
         }
+
+        // The final stream item is a control frame, never assistant content.
+        // All ordinary content chunks precede it and persistence has settled.
+        let receipt = GenerationReceipt {
+            outcome,
+            persisted,
+            error,
+        };
+        let json =
+            serde_json::to_string(&receipt).expect("generation receipt serialization cannot fail");
+        let _ = chunk_tx
+            .send(format!("{GENERATION_TERMINAL_PREFIX}{json}"))
+            .await;
     });
 
     // The response stream only forwards chunks from the background generation

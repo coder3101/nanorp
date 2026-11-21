@@ -1,6 +1,8 @@
-//! Accessible modal dialog: overlay, Escape-to-close, focus trap, and focus
-//! restoration. Panel width/padding come from the caller via `class`.
+//! Accessible modal dialog with nested-overlay dismissal, focus management,
+//! scroll locking, and a full-height phone layout. Width and content padding
+//! remain caller-controlled through `class`.
 
+use super::overlay::OverlayGuard;
 use leptos::callback::Callable;
 use leptos::html;
 use leptos::prelude::*;
@@ -38,8 +40,8 @@ pub fn Modal(
     }
 }
 
-/// Rendered only while the modal is open, so its listeners and focus
-/// management mount/unmount together with the dialog itself.
+/// Rendered only while the modal is open, so listeners and guards always
+/// mount/unmount together with the dialog itself.
 #[component]
 fn ModalPanel(
     open: RwSignal<bool>,
@@ -49,71 +51,100 @@ fn ModalPanel(
     children: Children,
 ) -> impl IntoView {
     let panel_ref = NodeRef::<html::Div>::new();
+    let overlay = OverlayGuard::new();
 
     let request_close = move || match on_close {
-        Some(cb) => cb.run(()),
+        Some(callback) => callback.run(()),
         None => open.set(false),
     };
 
+    // This is a fallback for focus briefly being outside the panel. Normal
+    // Escape handling happens on the panel so an inner menu can consume it.
     let escape_handle = leptos::leptos_dom::helpers::window_event_listener(
         leptos::ev::keydown,
-        move |e: leptos::web_sys::KeyboardEvent| {
-            if e.key() == "Escape" {
+        move |event: leptos::web_sys::KeyboardEvent| {
+            if event.key() == "Escape" && !event.default_prevented() && overlay.is_topmost() {
+                event.prevent_default();
+                event.stop_immediate_propagation();
                 request_close();
             }
         },
     );
     on_cleanup(move || escape_handle.remove());
 
-    // Focus the panel on open; restore focus to the opener on close.
     #[cfg(feature = "hydrate")]
     {
         use leptos::wasm_bindgen::JsCast;
 
         let previously_focused = StoredValue::new_local(
             leptos::web_sys::window()
-                .and_then(|w| w.document())
-                .and_then(|d| d.active_element()),
+                .and_then(|window| window.document())
+                .and_then(|document| document.active_element()),
         );
         Effect::new(move |_| {
-            if let Some(el) = panel_ref.get() {
-                let _ = el.focus();
+            if let Some(panel) = panel_ref.get() {
+                overlay.activate_background(&panel);
+                super::overlay::focus_initial(&panel);
             }
         });
         on_cleanup(move || {
-            if let Some(el) = previously_focused.get_value() {
-                if let Some(h) = el.dyn_ref::<leptos::web_sys::HtmlElement>() {
-                    let _ = h.focus();
+            if overlay.close() {
+                if let Some(element) = previously_focused.get_value() {
+                    if let Some(element) = element.dyn_ref::<leptos::web_sys::HtmlElement>() {
+                        let _ = element.focus();
+                    }
                 }
             }
         });
     }
 
-    let on_keydown = move |ev: leptos::web_sys::KeyboardEvent| {
-        if ev.key() == "Tab" {
-            #[cfg(feature = "hydrate")]
-            if let Some(panel) = panel_ref.get_untracked() {
-                trap_tab(&ev, &panel);
+    #[cfg(not(feature = "hydrate"))]
+    on_cleanup(move || {
+        overlay.close();
+    });
+
+    let on_keydown = move |event: leptos::web_sys::KeyboardEvent| {
+        if !overlay.is_topmost() || event.default_prevented() {
+            return;
+        }
+        match event.key().as_str() {
+            "Escape" => {
+                event.prevent_default();
+                event.stop_propagation();
+                request_close();
             }
-            #[cfg(not(feature = "hydrate"))]
-            let _ = &ev;
+            "Tab" => {
+                #[cfg(feature = "hydrate")]
+                if let Some(panel) = panel_ref.get_untracked() {
+                    super::overlay::trap_tab(&event, &panel);
+                }
+                #[cfg(not(feature = "hydrate"))]
+                let _ = &event;
+            }
+            _ => {}
         }
     };
 
     let panel_class = move || {
         format!(
-            "relative z-50 max-h-[90vh] w-full overflow-y-auto scroll-area rounded-xl \
-             border border-border bg-card text-card-foreground shadow-2xl animate-fade-in \
-             focus:outline-none {}",
+            "modal-panel scroll-area relative z-50 w-full overflow-y-auto overscroll-contain \
+             rounded-xl border border-border bg-card text-card-foreground shadow-2xl \
+             animate-fade-in focus:outline-none {}",
             class.get().unwrap_or_default()
         )
     };
 
     view! {
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="overlay-viewport fixed inset-0 z-50 flex items-stretch justify-center sm:items-center">
             <div
                 class="fixed inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
-                on:click=move |_| request_close()
+                aria-hidden="true"
+                data-overlay-backdrop
+                on:click=move |_| {
+                    if overlay.is_topmost() {
+                        request_close();
+                    }
+                }
             />
             <div
                 class=panel_class
@@ -127,50 +158,5 @@ fn ModalPanel(
                 {children()}
             </div>
         </div>
-    }
-}
-
-/// Keep Tab / Shift+Tab cycling within the dialog panel.
-#[cfg(feature = "hydrate")]
-fn trap_tab(ev: &leptos::web_sys::KeyboardEvent, panel: &leptos::web_sys::HtmlElement) {
-    use leptos::wasm_bindgen::JsCast;
-
-    const FOCUSABLE: &str = "a[href], button:not([disabled]), textarea:not([disabled]), \
-         input:not([disabled]):not([type='hidden']), select:not([disabled]), \
-         [tabindex]:not([tabindex='-1'])";
-
-    let Ok(nodes) = panel.query_selector_all(FOCUSABLE) else {
-        return;
-    };
-    let mut focusable: Vec<leptos::web_sys::HtmlElement> = Vec::new();
-    for i in 0..nodes.length() {
-        if let Some(el) = nodes
-            .item(i)
-            .and_then(|n| n.dyn_into::<leptos::web_sys::HtmlElement>().ok())
-        {
-            // `offset_parent` is None for display:none elements.
-            if el.offset_parent().is_some() {
-                focusable.push(el);
-            }
-        }
-    }
-    let (Some(first), Some(last)) = (focusable.first(), focusable.last()) else {
-        ev.prevent_default();
-        return;
-    };
-
-    let active = leptos::web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.active_element())
-        .and_then(|a| a.dyn_into::<leptos::web_sys::HtmlElement>().ok());
-
-    if ev.shift_key() {
-        if active.as_ref().map(|a| a == first).unwrap_or(true) {
-            ev.prevent_default();
-            let _ = last.focus();
-        }
-    } else if active.as_ref().map(|a| a == last).unwrap_or(true) {
-        ev.prevent_default();
-        let _ = first.focus();
     }
 }

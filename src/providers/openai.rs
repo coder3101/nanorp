@@ -10,6 +10,10 @@ use std::pin::Pin;
 use crate::models::message::LlmMessage;
 use crate::models::provider::{ConnectionStatus, ModelInfo, ProviderType};
 use crate::models::settings::SamplingParams;
+use crate::providers::buffering::{LineBuffer, SseDecoder};
+use crate::providers::http::{
+    self, JSON_REQUEST_TIMEOUT, MODELS_TIMEOUT, STREAM_IDLE_TIMEOUT, TEST_TIMEOUT,
+};
 use crate::providers::traits::{strip_code_fence, LlmProvider, StreamEvent};
 
 pub struct OpenAiProvider {
@@ -177,21 +181,28 @@ fn to_openai_message(msg: &LlmMessage) -> OpenAiChatMessage {
 impl LlmProvider for OpenAiProvider {
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = self.api_url("v1/models");
-        let resp = self
-            .auth(self.client.get(&url))
-            .send()
+        let resp = http::send(self.auth(self.client.get(&url)), MODELS_TIMEOUT)
             .await
             .with_context(|| format!("Cannot connect to {}", self.base_url))?;
 
-        // Some servers (e.g. LM Studio variants) may not implement /v1/models.
+        // Model discovery is optional for some compatible servers. Keep the
+        // error explicit; the selector offers a manual model-ID fallback.
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             tracing::warn!("provider {} has no /v1/models endpoint", self.base_url);
-            return Ok(Vec::new());
+            return Err(anyhow!(
+                "Model discovery is not supported at {url}. Verify the base URL or use an exact model ID"
+            ));
         }
         if !resp.status().is_success() {
+            let status = resp.status();
+            let guidance = match status {
+                reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+                    "; check the saved API key and endpoint permissions"
+                }
+                _ => "; verify the OpenAI-compatible base URL",
+            };
             return Err(anyhow!(
-                "Provider returned {} for /v1/models",
-                resp.status()
+                "Provider returned {status} for /v1/models{guidance}"
             ));
         }
 
@@ -227,9 +238,7 @@ impl LlmProvider for OpenAiProvider {
             response_format: None,
         };
 
-        let resp = self
-            .auth(self.client.post(&url).json(&body))
-            .send()
+        let resp = http::start_stream(self.auth(self.client.post(&url).json(&body)))
             .await
             .with_context(|| format!("Cannot connect to {}", self.base_url))?;
 
@@ -247,11 +256,20 @@ impl LlmProvider for OpenAiProvider {
         }
 
         let byte_stream = resp.bytes_stream();
-        let mut buffer = String::new();
+        let mut lines = LineBuffer::default();
+        let mut events = SseDecoder::default();
 
         let stream = async_stream::stream! {
             futures::pin_mut!(byte_stream);
-            while let Some(chunk) = byte_stream.next().await {
+            loop {
+                let next = tokio::time::timeout(STREAM_IDLE_TIMEOUT, byte_stream.next()).await;
+                let Some(chunk) = (match next {
+                    Ok(chunk) => chunk,
+                    Err(_) => {
+                        yield Ok(StreamEvent::Error("Provider stopped sending stream data for 90 seconds; retry the request".to_string()));
+                        return;
+                    }
+                }) else { break; };
                 let bytes = match chunk {
                     Ok(b) => b,
                     Err(e) => {
@@ -259,20 +277,21 @@ impl LlmProvider for OpenAiProvider {
                         return;
                     }
                 };
-                buffer.push_str(&String::from_utf8_lossy(&bytes));
-
-                while let Some(nl) = buffer.find('\n') {
-                    let line: String = buffer.drain(..=nl).collect();
-                    let line = line.trim();
-                    if line.is_empty() || !line.starts_with("data:") {
-                        continue;
+                let decoded_lines = match lines.push(&bytes) {
+                    Ok(lines) => lines,
+                    Err(e) => {
+                        yield Ok(StreamEvent::Error(e.to_string()));
+                        return;
                     }
-                    let data = line["data:".len()..].trim();
+                };
+
+                for line in decoded_lines {
+                    let Some(data) = events.push_line(&line) else { continue; };
                     if data == "[DONE]" {
                         yield Ok(StreamEvent::Done);
                         return;
                     }
-                    if let Ok(parsed) = serde_json::from_str::<OpenAiStreamChunk>(data) {
+                    if let Ok(parsed) = serde_json::from_str::<OpenAiStreamChunk>(&data) {
                         if let Some(choice) = parsed.choices.into_iter().next() {
                             if let Some(reasoning) = choice.delta.reasoning_content {
                                 if !reasoning.is_empty() {
@@ -284,7 +303,7 @@ impl LlmProvider for OpenAiProvider {
                                     yield Ok(StreamEvent::Delta(content));
                                 }
                             }
-                            if choice.finish_reason.as_deref() == Some("stop") {
+                            if choice.finish_reason.is_some() {
                                 yield Ok(StreamEvent::Done);
                                 return;
                             }
@@ -317,11 +336,12 @@ impl LlmProvider for OpenAiProvider {
             }),
         };
 
-        let resp = self
-            .auth(self.client.post(&url).json(&body))
-            .send()
-            .await
-            .with_context(|| format!("Cannot connect to {}", self.base_url))?;
+        let resp = http::send(
+            self.auth(self.client.post(&url).json(&body)),
+            JSON_REQUEST_TIMEOUT,
+        )
+        .await
+        .with_context(|| format!("Cannot connect to {}", self.base_url))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -344,24 +364,42 @@ impl LlmProvider for OpenAiProvider {
 
     async fn test_connection(&self) -> Result<ConnectionStatus> {
         let url = self.api_url("v1/models");
-        match self.auth(self.client.get(&url)).send().await {
+        match http::send(self.auth(self.client.get(&url)), TEST_TIMEOUT).await {
             Ok(resp) if resp.status().is_success() => Ok(ConnectionStatus::Connected),
             Ok(resp) if resp.status() == reqwest::StatusCode::UNAUTHORIZED => {
-                Ok(ConnectionStatus::Failed("Invalid API key".to_string()))
+                Ok(ConnectionStatus::Failed("Invalid or missing API key. Replace or clear the saved key in Settings.".to_string()))
+            }
+            Ok(resp) if resp.status() == reqwest::StatusCode::NOT_FOUND => {
+                Ok(ConnectionStatus::Failed(format!("The server was reached, but {url} was not found. Check whether the base URL should include /v1; you can still try a manual model ID.")))
             }
             Ok(resp) => Ok(ConnectionStatus::Failed(format!(
-                "Server returned {}",
+                "Server returned {}. Check the base URL and provider permissions.",
                 resp.status()
             ))),
-            Err(e) => Ok(ConnectionStatus::Failed(if e.is_connect() {
-                format!("Cannot connect to {}", self.base_url)
-            } else {
-                format!("Request failed: {e}")
-            })),
+            Err(e) => Ok(ConnectionStatus::Failed(http::connection_error(&self.base_url, &e))),
         }
     }
 
     fn provider_type(&self) -> ProviderType {
         ProviderType::OpenAiCompatible
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_urls_work_with_root_and_v1_base_urls() {
+        let client = reqwest::Client::new();
+        let root = OpenAiProvider::new(client.clone(), "https://example.com/".into(), None);
+        assert_eq!(root.api_url("v1/models"), "https://example.com/v1/models");
+
+        let v1 = OpenAiProvider::new(client, "https://example.com/v1/".into(), None);
+        assert_eq!(v1.api_url("v1/models"), "https://example.com/v1/models");
+        assert_eq!(
+            v1.api_url("v1/chat/completions"),
+            "https://example.com/v1/chat/completions"
+        );
     }
 }

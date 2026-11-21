@@ -20,33 +20,61 @@ pub fn MainLayout() -> impl IntoView {
 
     provide_context(SidebarState { open: sidebar_open });
 
+    // A resize across the desktop breakpoint must not leave a hidden drawer
+    // holding focus or the body's scroll lock.
+    #[cfg(feature = "hydrate")]
+    {
+        use leptos::wasm_bindgen::closure::Closure;
+        use leptos::wasm_bindgen::JsCast;
+
+        if let Some(media) = leptos::web_sys::window()
+            .and_then(|window| window.match_media("(min-width: 1024px)").ok().flatten())
+        {
+            if media.matches() {
+                sidebar_open.set(false);
+            }
+            let media_for_callback = media.clone();
+            let callback = Closure::<dyn FnMut()>::new(move || {
+                if media_for_callback.matches() {
+                    sidebar_open.set(false);
+                }
+            });
+            media.set_onchange(Some(callback.as_ref().unchecked_ref()));
+            // Stored with this layout's owner, so both the media query object
+            // and its callback are released together on navigation/disposal.
+            let _media_listener = StoredValue::new_local((media, callback));
+        }
+    }
+
     // Chat sessions render their own header (with a menu button on mobile),
     // so the generic mobile top bar is hidden there to avoid stacked chrome.
     let location = leptos_router::hooks::use_location();
     let on_chat_session = Signal::derive(move || location.pathname.get().starts_with("/chat/"));
 
     view! {
-        <div class="relative flex h-screen overflow-hidden bg-background text-foreground">
-            // Desktop sidebar — always visible from md up.
-            <aside class="hidden md:flex md:w-80 md:flex-col md:fixed md:inset-y-0 md:z-40">
+        <div class="relative flex h-viewport overflow-hidden bg-background text-foreground">
+            // Desktop sidebar. Keeping it below lg in a drawer also prevents
+            // landscape phones from losing most of their content width.
+            <aside class="hidden lg:fixed lg:inset-y-0 lg:z-40 lg:flex lg:w-80 lg:flex-col lg:pb-safe">
                 <Sidebar current_session_id=current_session.into() />
             </aside>
 
             // Mobile sidebar drawer (Sheet). Closes on navigate / overlay / Escape.
-            <Sheet open=sidebar_open side=SheetSide::Left>
+            <Sheet open=sidebar_open side=SheetSide::Left label="Navigation menu">
                 <Sidebar
                     current_session_id=current_session.into()
                     on_navigate=Callback::new(move |_| sidebar_open.set(false))
+                    on_close=Callback::new(move |_| sidebar_open.set(false))
                 />
             </Sheet>
 
             // Content column. Offset by the fixed sidebar width on desktop.
-            <div class="flex min-w-0 flex-1 flex-col md:pl-80">
+            <div class="flex min-w-0 flex-1 flex-col lg:pl-80">
                 // Mobile top bar — provides the sidebar toggle on every page
                 // except chat sessions, whose own header has one.
                 <header class=move || format!(
                     "{} h-14 shrink-0 items-center gap-3 border-b border-border \
-                     bg-background/95 px-4 backdrop-blur md:hidden",
+                     bg-background/95 px-4 pt-safe backdrop-blur lg:hidden",
                     if on_chat_session.get() { "hidden" } else { "flex" }
                 )>
                     <button
@@ -67,7 +95,7 @@ pub fn MainLayout() -> impl IntoView {
                     <span class="font-semibold">"NanoRP"</span>
                 </header>
 
-                <main class="min-h-0 flex-1 overflow-hidden">
+                <main class="min-h-0 flex-1 overflow-hidden pb-safe">
                     <Outlet />
                 </main>
             </div>

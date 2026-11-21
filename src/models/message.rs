@@ -16,6 +16,51 @@ pub const MAX_IMAGES_PER_MESSAGE: usize = 5;
 /// Maximum decoded size of a single attached image.
 pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 
+/// Maximum combined decoded size of all images on one message.
+pub const MAX_TOTAL_IMAGE_BYTES: usize = MAX_IMAGES_PER_MESSAGE * MAX_IMAGE_BYTES;
+
+/// Maximum decoded size of a character avatar.
+pub const MAX_AVATAR_BYTES: usize = 5 * 1024 * 1024;
+
+/// Smallest base64 string capacity that can hold `decoded_bytes`.
+pub const fn max_base64_len(decoded_bytes: usize) -> usize {
+    decoded_bytes.div_ceil(3) * 4
+}
+
+/// Base64 budget for one maximally-sized image.
+pub const MAX_IMAGE_BASE64_BYTES: usize = max_base64_len(MAX_IMAGE_BYTES);
+
+/// Combined base64 budget for a message's attachments. Each image is padded
+/// independently, so this is the sum of per-image budgets rather than one
+/// encoding of their concatenated bytes.
+pub const MAX_TOTAL_IMAGE_BASE64_BYTES: usize = MAX_IMAGES_PER_MESSAGE * MAX_IMAGE_BASE64_BYTES;
+
+/// HTTP body budget for chat requests containing base64 attachments. The extra
+/// mebibyte covers JSON field names, message text, and attachment metadata.
+pub const MAX_CHAT_REQUEST_BODY_BYTES: usize = MAX_TOTAL_IMAGE_BASE64_BYTES + 1024 * 1024;
+
+/// Marks the final text-stream item as a generation control frame rather than
+/// assistant content. The remainder of that item is a JSON `GenerationReceipt`.
+pub const GENERATION_TERMINAL_PREFIX: &str = "\u{1e}nanorp-generation:";
+
+/// Final outcome of a background generation. `persisted` reports whether the
+/// accumulated assistant reply was saved; blank stopped replies therefore use
+/// `persisted: false` without implying a persistence failure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GenerationReceipt {
+    pub outcome: GenerationOutcome,
+    pub persisted: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GenerationOutcome {
+    Completed,
+    Stopped,
+    Failed,
+}
+
 /// The role of a message sender, matching LLM API conventions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -138,4 +183,41 @@ pub struct LlmImage {
     pub base64_data: String,
     /// MIME type (e.g. "image/png", "image/jpeg")
     pub content_type: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generation_receipt_terminal_frame_is_prefix_and_json() {
+        let receipt = GenerationReceipt {
+            outcome: GenerationOutcome::Failed,
+            persisted: true,
+            error: Some("Provider disconnected".to_string()),
+        };
+        let frame = format!(
+            "{GENERATION_TERMINAL_PREFIX}{}",
+            serde_json::to_string(&receipt).unwrap()
+        );
+        let json = frame.strip_prefix(GENERATION_TERMINAL_PREFIX).unwrap();
+        let decoded: GenerationReceipt = serde_json::from_str(json).unwrap();
+        assert_eq!(decoded, receipt);
+        assert!(json.contains("\"outcome\":\"failed\""));
+        assert!(!json.contains("Completed"));
+    }
+
+    #[test]
+    fn body_limit_accepts_five_maximum_base64_images() {
+        assert_eq!(MAX_IMAGE_BASE64_BYTES, 13_981_016);
+        assert_eq!(MAX_TOTAL_IMAGE_BASE64_BYTES, 69_905_080);
+        assert_eq!(
+            MAX_IMAGES_PER_MESSAGE * MAX_IMAGE_BASE64_BYTES,
+            MAX_TOTAL_IMAGE_BASE64_BYTES
+        );
+        const {
+            assert!(MAX_CHAT_REQUEST_BODY_BYTES > MAX_TOTAL_IMAGE_BASE64_BYTES);
+            assert!(MAX_CHAT_REQUEST_BODY_BYTES <= MAX_TOTAL_IMAGE_BASE64_BYTES + 1024 * 1024);
+        }
+    }
 }

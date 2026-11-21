@@ -420,4 +420,42 @@ mod tests {
         assert_eq!(default.id, b.id);
         assert!(!svc.get(a.id).unwrap().unwrap().is_default);
     }
+
+    #[test]
+    fn clearing_a_key_removes_it_from_storage() {
+        use_test_key();
+        let db = test_db();
+        let svc = ProviderService::new(db.clone());
+        let created = svc.create(&new_provider("P", Some("sk-old"))).unwrap();
+        let updated = svc
+            .update(&UpdateProvider {
+                id: created.id,
+                name: None,
+                provider_type: None,
+                api_url: None,
+                api_key: Some(None),
+                is_default: None,
+            })
+            .unwrap();
+        assert_eq!(updated.api_key, None);
+        assert_eq!(raw_stored_key(&db, created.id), None);
+    }
+
+    #[test]
+    fn provider_dto_contains_key_presence_but_not_the_secret() {
+        use_test_key();
+        let db = test_db();
+        let svc = ProviderService::new(db);
+        let created = svc.create(&new_provider("P", Some("sk-secret"))).unwrap();
+        let public = crate::models::provider::ProviderDto::from(created);
+        assert!(public.has_api_key);
+        let serialized = serde_json::to_string(&public).unwrap();
+        assert!(!serialized.contains("sk-secret"));
+        let value: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert!(value.get("api_key").is_none());
+        assert_eq!(
+            value.get("has_api_key").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
 }

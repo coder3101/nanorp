@@ -24,20 +24,54 @@ impl std::fmt::Display for ProviderType {
     }
 }
 
-/// A configured LLM provider endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A configured LLM provider endpoint, including its decrypted credentials.
+///
+/// This type is server-internal. Browser-facing server functions return
+/// [`ProviderDto`] instead so an API key can never be serialized accidentally.
+#[derive(Debug, Clone)]
 pub struct Provider {
     pub id: Uuid,
     pub name: String,
     pub provider_type: ProviderType,
     /// Base URL without trailing slash (e.g. "http://localhost:11434")
     pub api_url: String,
-    /// API key — required for OpenAI-compatible, None for Ollama
+    /// Decrypted API key. Never expose this type from a browser-facing API.
     pub api_key: Option<String>,
     /// Whether this is the default provider for new chats
     pub is_default: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Public provider configuration returned to the browser.
+///
+/// `has_api_key` lets the settings UI offer keep/replace/clear behavior without
+/// sending the existing secret back to the client, even in masked form.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderDto {
+    pub id: Uuid,
+    pub name: String,
+    pub provider_type: ProviderType,
+    pub api_url: String,
+    pub has_api_key: bool,
+    pub is_default: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<Provider> for ProviderDto {
+    fn from(provider: Provider) -> Self {
+        Self {
+            id: provider.id,
+            name: provider.name,
+            provider_type: provider.provider_type,
+            api_url: provider.api_url,
+            has_api_key: provider.api_key.is_some(),
+            is_default: provider.is_default,
+            created_at: provider.created_at,
+            updated_at: provider.updated_at,
+        }
+    }
 }
 
 /// Input for creating a new provider. ID and timestamps are generated server-side.

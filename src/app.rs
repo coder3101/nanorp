@@ -11,7 +11,6 @@ use leptos_router::{
     components::{ParentRoute, Route, Router, Routes},
     ParamSegment, StaticSegment,
 };
-use std::collections::HashMap;
 use uuid::Uuid;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
@@ -20,14 +19,14 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
         <html lang="en">
             <head>
                 <meta charset="utf-8"/>
-                <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"/>
                 // Apply persisted theme before first paint to avoid a flash.
                 <script>{crate::theme::theme_init_script()}</script>
                 <AutoReload options=options.clone() />
                 <HydrationScripts options/>
                 <MetaTags/>
             </head>
-            <body class="min-h-screen bg-background font-sans antialiased">
+            <body class="min-h-viewport bg-background font-sans antialiased">
                 <App/>
             </body>
         </html>
@@ -37,6 +36,10 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 #[component]
 pub fn App() -> impl IntoView {
     provide_meta_context();
+
+    // One app-scoped listener follows OS theme changes only while the saved
+    // preference is `system`; its DOM callback is removed on app disposal.
+    let _system_theme = StoredValue::new_local(crate::theme::listen_system_theme());
 
     view! {
         <Stylesheet id="leptos" href="/pkg/nanorp.css"/>
@@ -55,15 +58,12 @@ pub fn App() -> impl IntoView {
 fn AppRoutes() -> impl IntoView {
     let viewing = RwSignal::new(None::<Uuid>);
     provide_context(CurrentSession(viewing));
-    provide_context(GenerationTracker {
-        active: RwSignal::new(HashMap::new()),
-        viewing,
-    });
+    provide_context(GenerationTracker::new(viewing));
 
     view! {
         <Router>
             <Routes fallback=|| view! {
-                <div class="flex h-screen items-center justify-center">
+                <div class="flex h-viewport items-center justify-center">
                     <p class="text-muted-foreground">"Page not found."</p>
                 </div>
             }>

@@ -2,6 +2,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
+use rusqlite::OptionalExtension;
 use uuid::Uuid;
 
 use crate::config;
@@ -140,24 +141,79 @@ impl CharacterService {
     }
 
     pub fn delete(&self, id: Uuid) -> Result<()> {
-        // Grab the avatar path first so we can clean up the file afterwards.
-        let avatar = self.get(id)?.and_then(|c| c.avatar_path);
-
-        {
-            let conn = self.db.conn();
-            let conn = conn.lock().expect("db mutex poisoned");
-            conn.execute(
-                "DELETE FROM characters WHERE id = ?1",
+        let conn = self.db.conn();
+        let mut conn = conn.lock().expect("db mutex poisoned");
+        let tx = conn.transaction()?;
+        let avatar = tx
+            .query_row(
+                "SELECT avatar_path FROM characters WHERE id = ?1",
                 rusqlite::params![id.to_string()],
+                |row| row.get::<_, Option<String>>(0),
             )
-            .context("delete character")?;
+            .optional()?
+            .flatten();
+        let mut attachments = Vec::new();
+        let mut stmt = tx.prepare(
+            "SELECT a.file_path FROM attachments a
+             JOIN messages m ON m.id = a.message_id
+             JOIN chat_sessions s ON s.id = m.session_id
+             WHERE s.character_id = ?1",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![id.to_string()], |row| {
+            row.get::<_, String>(0)
+        })?;
+        for row in rows {
+            attachments.push(row?);
         }
+        drop(stmt);
+        tx.execute(
+            "DELETE FROM characters WHERE id = ?1",
+            rusqlite::params![id.to_string()],
+        )
+        .context("delete character")?;
+        tx.commit()?;
+        drop(conn);
 
-        // Best-effort file cleanup (DB delete already succeeded).
+        // Files are best-effort cleanup only after the cascading DB commit.
+        for path in attachments {
+            crate::services::chat_service::remove_attachment_file(&path);
+        }
         if let Some(rel) = avatar {
             remove_avatar_file(&rel);
         }
         Ok(())
+    }
+
+    /// Validate, stage, and activate a new avatar before updating the DB. The
+    /// old avatar remains valid until the DB commit succeeds. A unique filename
+    /// also prevents replacement from overwriting the currently served file.
+    pub fn replace_avatar(&self, id: Uuid, data: &str, content_type: &str) -> Result<Character> {
+        use crate::models::message::MAX_AVATAR_BYTES;
+        use crate::services::chat_service::decode_image;
+
+        let decoded = decode_image(data, content_type, MAX_AVATAR_BYTES)?;
+        let filename = format!("{id}-{}.{}", Uuid::new_v4(), decoded.extension);
+        let final_path = config::avatars_dir()?.join(&filename);
+        let staged_path = config::avatars_dir()?.join(format!(".{filename}.staging"));
+        let write_result = (|| -> Result<()> {
+            std::fs::write(&staged_path, &decoded.bytes).context("stage avatar file")?;
+            std::fs::rename(&staged_path, &final_path).context("activate avatar file")?;
+            Ok(())
+        })();
+        if let Err(error) = write_result {
+            let _ = std::fs::remove_file(&staged_path);
+            let _ = std::fs::remove_file(&final_path);
+            return Err(error);
+        }
+
+        let rel_path = format!("avatars/{filename}");
+        match self.set_avatar_path(id, Some(rel_path)) {
+            Ok(character) => Ok(character),
+            Err(error) => {
+                let _ = std::fs::remove_file(&final_path);
+                Err(error)
+            }
+        }
     }
 
     /// Update just the avatar path, removing any previous avatar file that
@@ -219,10 +275,19 @@ fn opt_clean(s: String) -> Option<String> {
     }
 }
 
-/// Delete an avatar file given its config-relative path (e.g. "avatars/{id}.png").
+/// Delete an avatar file only when its DB path stays under `avatars/`.
 fn remove_avatar_file(rel: &str) {
-    if let Ok(dir) = config::config_dir() {
-        let path = dir.join(rel);
+    use std::path::{Component, Path};
+    let path = Path::new(rel);
+    let mut components = path.components();
+    let safe = matches!(components.next(), Some(Component::Normal(dir)) if dir == "avatars")
+        && components.all(|component| matches!(component, Component::Normal(_)));
+    if !safe {
+        tracing::warn!("refusing to remove unsafe avatar path {rel}");
+        return;
+    }
+    if let (Ok(dir), Some(relative)) = (config::avatars_dir(), rel.strip_prefix("avatars/")) {
+        let path = dir.join(relative);
         if path.exists() {
             if let Err(e) = std::fs::remove_file(&path) {
                 tracing::warn!("failed to remove avatar file {}: {e}", path.display());
@@ -265,4 +330,112 @@ fn parse_dt(s: &str) -> rusqlite::Result<chrono::DateTime<chrono::Utc>> {
                 "invalid timestamp".into(),
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::chat::NewChatSession;
+    use crate::models::message::{MessageRole, NewMessage};
+    use crate::services::chat_service::ChatService;
+    use base64::Engine;
+
+    fn new_character() -> NewCharacter {
+        NewCharacter {
+            name: "File cleanup".to_string(),
+            role: None,
+            personality: None,
+            system_prompt: None,
+            greeting: None,
+        }
+    }
+
+    fn encoded(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    #[test]
+    fn character_delete_cascades_avatar_and_descendant_attachment_files() {
+        let _test_config = crate::db::TestConfigDir::new();
+        let db = Db::open_in_memory().unwrap();
+        db.run_migrations().unwrap();
+        let characters = CharacterService::new(db.clone());
+        let character = characters.create(&new_character()).unwrap();
+        let character = characters
+            .replace_avatar(character.id, &encoded(b"avatar"), "image/png")
+            .unwrap();
+        let avatar = config::config_dir()
+            .unwrap()
+            .join(character.avatar_path.as_deref().unwrap());
+        let session = ChatService::new(db.clone())
+            .create_session(
+                &NewChatSession {
+                    character_id: character.id,
+                    title: None,
+                },
+                None,
+            )
+            .unwrap();
+        let message = ChatService::new(db.clone())
+            .add_message(&NewMessage {
+                session_id: session.id,
+                role: MessageRole::User,
+                content: "attachment".to_string(),
+                image_attachments: vec![crate::models::message::ImageUpload {
+                    data: encoded(b"attachment"),
+                    content_type: "image/png".to_string(),
+                    original_name: None,
+                }],
+                model_used: None,
+                provider_id: None,
+            })
+            .unwrap();
+        let attachment = config::config_dir()
+            .unwrap()
+            .join(&message.attachments[0].file_path);
+        assert!(avatar.exists());
+        assert!(attachment.exists());
+
+        characters.delete(character.id).unwrap();
+        assert!(!avatar.exists());
+        assert!(!attachment.exists());
+        assert!(characters.get(character.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn failed_avatar_db_replacement_preserves_old_and_cleans_new_file() {
+        let _test_config = crate::db::TestConfigDir::new();
+        let db = Db::open_in_memory().unwrap();
+        db.run_migrations().unwrap();
+        let characters = CharacterService::new(db.clone());
+        let character = characters.create(&new_character()).unwrap();
+        let character = characters
+            .replace_avatar(character.id, &encoded(b"old avatar"), "image/png")
+            .unwrap();
+        let old_path = config::config_dir()
+            .unwrap()
+            .join(character.avatar_path.as_deref().unwrap());
+        {
+            let conn = db.conn();
+            let conn = conn.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER fail_avatar_update BEFORE UPDATE OF avatar_path ON characters
+                 BEGIN SELECT RAISE(ABORT, 'injected avatar update failure'); END;",
+            )
+            .unwrap();
+        }
+
+        assert!(characters
+            .replace_avatar(character.id, &encoded(b"new avatar"), "image/webp")
+            .is_err());
+        assert!(old_path.exists());
+        assert_eq!(
+            std::fs::read_dir(config::avatars_dir().unwrap())
+                .unwrap()
+                .count(),
+            1
+        );
+        let reloaded = characters.get(character.id).unwrap().unwrap();
+        assert_eq!(reloaded.avatar_path, character.avatar_path);
+    }
 }

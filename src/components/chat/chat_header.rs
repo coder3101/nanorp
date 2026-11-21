@@ -41,16 +41,16 @@ pub fn ChatHeader(
     };
 
     view! {
-        <div class="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 \
-                    border-b border-border bg-background/95 backdrop-blur \
-                    supports-[backdrop-filter]:bg-background/60 px-4">
-            <div class="flex items-center gap-3 min-w-0">
+        <div class="sticky top-0 z-30 flex min-h-14 items-center justify-between gap-2 \
+                    border-b border-border bg-background/95 px-2 pt-[env(safe-area-inset-top)] backdrop-blur \
+                    supports-[backdrop-filter]:bg-background/60 sm:px-4">
+            <div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
                 {sidebar.map(|s| {
                     let open = s.open;
                     view! {
                         <button
-                            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md \
-                                   text-foreground transition-colors hover:bg-accent md:hidden"
+                            class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md \
+                                   text-foreground transition-colors hover:bg-accent lg:hidden"
                             aria-label="Open menu"
                             on:click=move |_| open.set(true)
                         >
@@ -69,12 +69,12 @@ pub fn ChatHeader(
                 <div class="min-w-0">
                     <p class="text-sm font-semibold truncate">{char_name}</p>
                     {move || char_role().map(|role| view! {
-                        <p class="text-xs text-muted-foreground truncate">{role}</p>
+                        <p class="hidden text-xs text-muted-foreground truncate min-[420px]:block">{role}</p>
                     })}
                 </div>
             </div>
 
-            <div class="flex items-center shrink-0">
+            <div class="flex min-w-0 max-w-[48vw] shrink-0 items-center sm:max-w-none">
                 <ModelSelector
                     selected_provider=selected_provider
                     selected_model=selected_model

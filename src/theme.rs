@@ -16,6 +16,7 @@ pub fn theme_init_script() -> &'static str {
             var mq = window.matchMedia('(prefers-color-scheme: dark)');
             var dark = t === 'dark' || (t === 'system' && mq.matches);
             document.documentElement.classList.toggle('dark', dark);
+            document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
         } catch (e) {}
     })();
     "#
@@ -58,6 +59,12 @@ mod client {
             _ => prefers_dark(),
         };
         let _ = root.class_list().toggle_with_force("dark", dark);
+        use leptos::wasm_bindgen::JsCast;
+        if let Some(root) = root.dyn_ref::<web_sys::HtmlElement>() {
+            let _ = root
+                .style()
+                .set_property("color-scheme", if dark { "dark" } else { "light" });
+        }
     }
 
     /// Persist the theme and apply it immediately.
@@ -66,6 +73,59 @@ mod client {
             let _ = storage.set_item(STORAGE_KEY, theme);
         }
         apply(theme);
+    }
+}
+
+/// Owns the OS color-scheme listener. Dropping it detaches the DOM callback,
+/// including the closure reference held by `MediaQueryList`.
+pub struct SystemThemeListener {
+    #[cfg(feature = "hydrate")]
+    media: Option<leptos::web_sys::MediaQueryList>,
+    #[cfg(feature = "hydrate")]
+    _callback: Option<leptos::wasm_bindgen::closure::Closure<dyn FnMut()>>,
+}
+
+#[cfg(feature = "hydrate")]
+impl Drop for SystemThemeListener {
+    fn drop(&mut self) {
+        if let Some(media) = &self.media {
+            media.set_onchange(None);
+        }
+    }
+}
+
+/// Follow OS theme changes while the persisted preference is `system`.
+/// Calling this repeatedly is unnecessary; the owner should retain and drop
+/// the returned guard with its normal lifecycle.
+pub fn listen_system_theme() -> SystemThemeListener {
+    apply(&get_theme());
+
+    #[cfg(feature = "hydrate")]
+    {
+        use leptos::wasm_bindgen::closure::Closure;
+        use leptos::wasm_bindgen::JsCast;
+
+        let media = web_sys::window()
+            .and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten());
+        let callback = media.as_ref().map(|_| {
+            Closure::<dyn FnMut()>::new(move || {
+                if get_theme() == DEFAULT_THEME {
+                    apply(DEFAULT_THEME);
+                }
+            })
+        });
+        if let (Some(media), Some(callback)) = (&media, &callback) {
+            media.set_onchange(Some(callback.as_ref().unchecked_ref()));
+        }
+        SystemThemeListener {
+            media,
+            _callback: callback,
+        }
+    }
+
+    #[cfg(not(feature = "hydrate"))]
+    {
+        SystemThemeListener {}
     }
 }
 

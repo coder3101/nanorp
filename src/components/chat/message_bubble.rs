@@ -10,6 +10,7 @@ struct PendingImg {
     data: String,
     content_type: String,
     original_name: Option<String>,
+    file_size: u64,
 }
 
 /// Read a picked image `File` into base64 and append it to `pending`.
@@ -20,16 +21,19 @@ struct PendingImg {
 fn read_image_file(
     file: leptos::web_sys::File,
     pending: RwSignal<Vec<PendingImg>>,
-    kept: usize,
+    kept: Vec<Attachment>,
     toast: &crate::components::ui::toast::UseToast,
 ) {
-    use crate::models::message::{MAX_IMAGES_PER_MESSAGE, MAX_IMAGE_BYTES};
+    use crate::models::message::{MAX_IMAGES_PER_MESSAGE, MAX_IMAGE_BYTES, MAX_TOTAL_IMAGE_BYTES};
     use leptos::wasm_bindgen::closure::Closure;
 
     let content_type = file.type_();
-    if !content_type.starts_with("image/") {
+    if !matches!(
+        content_type.as_str(),
+        "image/png" | "image/jpeg" | "image/jpg" | "image/webp" | "image/gif"
+    ) {
         toast.warning(format!(
-            "\"{}\" isn't an image — only images can be attached",
+            "\"{}\" isn't supported here — choose PNG, JPEG, WebP, or GIF",
             file.name()
         ));
         return;
@@ -38,13 +42,26 @@ fn read_image_file(
         toast.warning(format!("\"{}\" is too large (max 10 MB)", file.name()));
         return;
     }
-    if kept + pending.get().len() >= MAX_IMAGES_PER_MESSAGE {
+    let pending_bytes = pending
+        .get_untracked()
+        .iter()
+        .map(|image| image.file_size)
+        .sum::<u64>();
+    let kept_bytes = kept.iter().map(|image| image.file_size).sum::<u64>();
+    let total_bytes = kept_bytes
+        .saturating_add(pending_bytes)
+        .saturating_add(file.size() as u64);
+    if kept.len() + pending.get_untracked().len() >= MAX_IMAGES_PER_MESSAGE
+        || total_bytes > MAX_TOTAL_IMAGE_BYTES as u64
+    {
         toast.warning(format!(
-            "You can attach up to {MAX_IMAGES_PER_MESSAGE} images per message"
+            "Attachments are limited to {MAX_IMAGES_PER_MESSAGE} images and {} MB in total",
+            MAX_TOTAL_IMAGE_BYTES / (1024 * 1024)
         ));
         return;
     }
     let name = file.name();
+    let size = file.size() as u64;
     let reader = leptos::web_sys::FileReader::new().unwrap();
     let reader_clone = reader.clone();
     let onload = Closure::wrap(Box::new(move |_: leptos::web_sys::Event| {
@@ -54,12 +71,18 @@ fn read_image_file(
                 pending.update(|v| {
                     // Re-checked here because reads complete asynchronously, so
                     // a multi-file selection could otherwise overshoot the cap.
-                    if kept + v.len() < MAX_IMAGES_PER_MESSAGE {
+                    let total = kept.iter().map(|image| image.file_size).sum::<u64>()
+                        + v.iter().map(|image| image.file_size).sum::<u64>()
+                        + size;
+                    if kept.len() + v.len() < MAX_IMAGES_PER_MESSAGE
+                        && total <= MAX_TOTAL_IMAGE_BYTES as u64
+                    {
                         v.push(PendingImg {
                             id: Uuid::new_v4(),
                             data: base64,
                             content_type: content_type.clone(),
                             original_name: Some(name.clone()),
+                            file_size: size,
                         });
                     }
                 });
@@ -131,7 +154,10 @@ pub fn MessageBubble(
     render_thinking: MaybeProp<bool>,
     /// Called with the edit payload when a user message edit is saved.
     on_edit: Option<Callback<EditPayload>>,
-    /// Called with the assistant message id to regenerate it.
+    /// Number of later turns that edit-and-submit will permanently remove.
+    #[prop(optional)]
+    later_message_count: usize,
+    /// Called with the latest eligible assistant message id to regenerate it.
     on_regenerate: Option<Callback<Uuid>>,
 ) -> impl IntoView {
     use leptos::callback::Callable;
@@ -142,7 +168,7 @@ pub fn MessageBubble(
     let content = message.content.clone();
     let attachments = message.attachments.clone();
     let model_used = message.model_used.clone();
-    let time = format_time(&message.created_at);
+    let time = StoredValue::new(format_time(&message.created_at));
     let msg_id = message.id;
     let show_thinking = Signal::derive(move || render_thinking.get().unwrap_or(true));
 
@@ -151,6 +177,8 @@ pub fn MessageBubble(
         let editing = RwSignal::new(false);
         let draft = RwSignal::new(content.clone());
         let content_for_view = content.clone();
+        let content_for_copy = StoredValue::new(content.clone());
+        let has_copy_text = !content.trim().is_empty();
         // Copyable handle to the original text for the (re-rendered) Edit button.
         let original = StoredValue::new(content.clone());
         let original_attachments = StoredValue::new(attachments.clone());
@@ -168,8 +196,8 @@ pub fn MessageBubble(
         };
 
         view! {
-            <div class="group flex items-start justify-end gap-2 px-2 py-1.5 sm:gap-3 sm:px-4 sm:py-2">
-                <div class="flex max-w-[85%] flex-col items-end sm:max-w-[80%]">
+            <div class="group flex animate-fade-in items-start justify-end gap-2 px-2 py-1.5 sm:gap-3 sm:px-4 sm:py-2">
+                <div class=move || format!("flex min-w-0 flex-col items-end {}", if editing.get() { "w-[calc(100%_-_2.25rem)]" } else { "max-w-[calc(100%_-_2.25rem)] sm:max-w-[80%]" })>
                     <Show
                         when=move || editing.get()
                         fallback={
@@ -177,7 +205,7 @@ pub fn MessageBubble(
                             move || view! {
                                 <div class="rounded-2xl rounded-tr-md bg-primary px-3 py-2 text-primary-foreground shadow-sm sm:px-4 sm:py-2.5">
                                     <ImageGrid attachments=attachments.clone() is_user=true />
-                                    <p class="whitespace-pre-wrap break-words text-[13px] leading-relaxed sm:text-sm">
+                                    <p class="whitespace-pre-wrap break-words text-[15px] leading-relaxed sm:text-sm">
                                         {content_for_view.clone()}
                                     </p>
                                 </div>
@@ -195,9 +223,9 @@ pub fn MessageBubble(
                                             let src = format!("/{}", att.file_path);
                                             view! {
                                                 <div class="relative">
-                                                    <img src=src class="h-16 w-16 rounded-lg border border-border object-cover" />
+                                                    <img src=src alt="Message attachment" class="h-16 w-16 rounded-lg border border-border object-cover" />
                                                     <button
-                                                        class="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground shadow"
+                                                        class="absolute -right-2 -top-2 flex h-8 w-8 items-center justify-center rounded-full bg-destructive text-sm text-destructive-foreground shadow sm:h-6 sm:w-6"
                                                         title="Remove image"
                                                         aria-label="Remove image"
                                                         on:click=move |_| kept.update(|v| v.retain(|a| a.id != att_id))
@@ -214,9 +242,9 @@ pub fn MessageBubble(
                                             let src = format!("data:{};base64,{}", p.content_type, p.data);
                                             view! {
                                                 <div class="relative">
-                                                    <img src=src class="h-16 w-16 rounded-lg border border-border object-cover" />
+                                                    <img src=src alt="Message attachment" class="h-16 w-16 rounded-lg border border-border object-cover" />
                                                     <button
-                                                        class="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground shadow"
+                                                        class="absolute -right-2 -top-2 flex h-8 w-8 items-center justify-center rounded-full bg-destructive text-sm text-destructive-foreground shadow sm:h-6 sm:w-6"
                                                         title="Remove image"
                                                         aria-label="Remove image"
                                                         on:click=move |_| pending.update(|v| v.retain(|x| x.id != pid))
@@ -240,7 +268,7 @@ pub fn MessageBubble(
                             />
 
                             <input
-                                type="file" accept="image/*" multiple=true class="hidden"
+                                type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple=true class="hidden"
                                 node_ref=file_input
                                 on:change={
                                     let toast = toast.clone();
@@ -249,10 +277,10 @@ pub fn MessageBubble(
                                         {
                                             let input = _ev.target().unwrap().unchecked_into::<leptos::web_sys::HtmlInputElement>();
                                             if let Some(files) = input.files() {
-                                                let kept_count = kept.get().len();
+                                                let kept_images = kept.get_untracked();
                                                 for i in 0..files.length() {
                                                     if let Some(file) = files.get(i) {
-                                                        read_image_file(file, pending, kept_count, &toast);
+                                                        read_image_file(file, pending, kept_images.clone(), &toast);
                                                     }
                                                 }
                                             }
@@ -297,6 +325,15 @@ pub fn MessageBubble(
                                     <button
                                         class="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
                                         on:click=move |_| {
+                                            if later_message_count > 0 {
+                                                let confirmed = crate::components::ui::confirm::confirm(&format!(
+                                                    "Save and submit this edit? This permanently removes {later_message_count} later message{}.",
+                                                    if later_message_count == 1 { "" } else { "s" }
+                                                ));
+                                                if !confirmed {
+                                                    return;
+                                                }
+                                            }
                                             let text = draft.get();
                                             let keep_ids: Vec<Uuid> = kept.get().iter().map(|a| a.id).collect();
                                             let new_images: Vec<ImageUpload> = pending.get().into_iter().map(|p| ImageUpload {
@@ -320,20 +357,25 @@ pub fn MessageBubble(
                         </div>
                     </Show>
 
-                    <div class="mt-1 flex items-center gap-2 px-1 opacity-0 transition-opacity \
-                                group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
-                        <Show when=move || can_edit && !editing.get()>
-                            <button
-                                class="inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                                title="Edit message"
-                                on:click=move |_| start_edit()
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
-                                "Edit"
-                            </button>
-                        </Show>
-                        <span class="text-[11px] text-muted-foreground">{time}</span>
-                    </div>
+                    <Show when=move || !editing.get()>
+                        <div class="mt-1 flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 px-1 opacity-0 transition-opacity \
+                                    group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
+                            <Show when=move || has_copy_text>
+                                <CopyButton text=content_for_copy.get_value() />
+                            </Show>
+                            <Show when=move || can_edit>
+                                <button
+                                    class="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground pointer-coarse:min-h-11"
+                                    title="Edit message"
+                                    on:click=move |_| start_edit()
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
+                                    "Edit"
+                                </button>
+                            </Show>
+                            <span class="text-[11px] text-muted-foreground">{time.get_value()}</span>
+                        </div>
+                    </Show>
                 </div>
                 // "You" avatar
                 <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-semibold text-secondary-foreground sm:h-8 sm:w-8 sm:text-xs">
@@ -368,9 +410,9 @@ pub fn MessageBubble(
         };
 
         view! {
-            <div class="group flex items-start gap-2 px-2 py-1.5 sm:gap-3 sm:px-4 sm:py-2">
+            <div class="group flex animate-fade-in items-start gap-2 px-2 py-1.5 sm:gap-3 sm:px-4 sm:py-2">
                 {avatar}
-                <div class="flex max-w-[85%] flex-col items-start sm:max-w-[80%]">
+                <div class="flex min-w-0 max-w-[calc(100%_-_2.25rem)] flex-col items-start sm:max-w-[80%]">
                     <div class="rounded-2xl rounded-tl-md border border-border bg-card px-3 py-2 text-card-foreground shadow-sm sm:px-4 sm:py-2.5">
                         <ImageGrid attachments=attachments is_user=false />
 
@@ -406,7 +448,7 @@ pub fn MessageBubble(
                                 // `render_markdown` escapes any raw HTML in the
                                 // model output, so this is safe for inner_html.
                                 <div
-                                    class="prose max-w-none break-words text-[13px] sm:text-sm"
+                                    class="prose max-w-none break-words text-[15px] sm:text-sm"
                                     inner_html=move || crate::markdown::render_markdown(&parsed.get().2)
                                 ></div>
 
@@ -452,12 +494,12 @@ pub fn MessageBubble(
                                     parse_thinking(&content_for_copy).answer
                                 };
                                 Some(view! {
-                                    <div class="mt-1 flex items-center gap-2 px-1 opacity-0 transition-opacity \
+                                    <div class="mt-1 flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 px-1 opacity-0 transition-opacity \
                                                 group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
                                         <CopyButton text=copy_text />
                                         <Show when=move || can_regen>
                                             <button
-                                                class="inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                                                class="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground pointer-coarse:min-h-11"
                                                 title="Regenerate response"
                                                 on:click=move |_| {
                                                     if let Some(cb) = on_regenerate { cb.run(msg_id); }
@@ -472,7 +514,7 @@ pub fn MessageBubble(
                                                 {m}
                                             </span>
                                         })}
-                                        <span class="text-[11px] text-muted-foreground">{time.clone()}</span>
+                                        <span class="text-[11px] text-muted-foreground">{time.get_value()}</span>
                                     </div>
                                 })
                             }
@@ -492,7 +534,7 @@ fn CopyButton(text: String) -> impl IntoView {
     let toast = crate::components::ui::toast::use_toast();
     view! {
         <button
-            class="inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            class="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground pointer-coarse:min-h-11"
             title="Copy"
             on:click=move |_| {
                 #[cfg(feature = "hydrate")]
@@ -664,11 +706,36 @@ fn ImageGrid(attachments: Vec<Attachment>, is_user: bool) -> impl IntoView {
 fn Lightbox(#[prop(into)] src: Signal<String>, on_close: Callback<()>) -> impl IntoView {
     use leptos::callback::Callable;
 
+    let close_ref = NodeRef::<leptos::html::Button>::new();
+    let previously_focused = StoredValue::new_local(
+        leptos::web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.active_element()),
+    );
+    Effect::new(move |_| {
+        if let Some(close) = close_ref.get() {
+            let _ = close.focus();
+        }
+    });
+    on_cleanup(move || {
+        if let Some(element) = previously_focused.get_value() {
+            if let Some(html) = element.dyn_ref::<leptos::web_sys::HtmlElement>() {
+                let _ = html.focus();
+            }
+        }
+    });
+
     let handle = leptos::leptos_dom::helpers::window_event_listener(
         leptos::ev::keydown,
-        move |e: leptos::web_sys::KeyboardEvent| {
-            if e.key() == "Escape" {
+        move |event: leptos::web_sys::KeyboardEvent| {
+            if event.key() == "Escape" {
                 on_close.run(());
+            } else if event.key() == "Tab" {
+                // The close button is the only interactive control.
+                event.prevent_default();
+                if let Some(close) = close_ref.get_untracked() {
+                    let _ = close.focus();
+                }
             }
         },
     );
@@ -676,7 +743,7 @@ fn Lightbox(#[prop(into)] src: Signal<String>, on_close: Callback<()>) -> impl I
 
     view! {
         <div
-            class="fixed inset-0 z-[90] flex cursor-zoom-out items-center justify-center bg-black/80 p-4 animate-fade-in"
+            class="fixed inset-0 z-[90] flex cursor-zoom-out items-center justify-center bg-black/80 p-[max(1rem,env(safe-area-inset-top))_max(1rem,env(safe-area-inset-right))_max(1rem,env(safe-area-inset-bottom))_max(1rem,env(safe-area-inset-left))] animate-fade-in"
             role="dialog"
             aria-modal="true"
             aria-label="Image preview"
@@ -685,11 +752,13 @@ fn Lightbox(#[prop(into)] src: Signal<String>, on_close: Callback<()>) -> impl I
             <img
                 src=move || src.get()
                 alt="Full size preview"
-                class="max-h-[90vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+                class="max-h-[90dvh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
             />
             <button
-                class="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full \
-                       bg-black/60 text-white transition-colors hover:bg-black/80"
+                node_ref=close_ref
+                type="button"
+                class="absolute right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))] flex h-11 w-11 items-center justify-center rounded-full \
+                       bg-black/60 text-white transition-colors hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                 aria-label="Close preview"
                 on:click=move |ev| {
                     ev.stop_propagation();

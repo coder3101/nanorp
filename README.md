@@ -66,6 +66,10 @@ docker compose up -d
 
 Then open <http://localhost:3000>.
 
+> NanoRP is a single-user application without built-in accounts. Use it on a
+> trusted machine/network, or place it behind an authenticating reverse proxy
+> before exposing it to a LAN or the Internet.
+
 Images are published for `linux/amd64` and `linux/arm64` on every release.
 
 > **Connecting to Ollama on the host?** Use `http://host.docker.internal:11434`
@@ -74,8 +78,11 @@ Images are published for `linux/amd64` and `linux/arm64` on every release.
 
 ### Your data
 
-The SQLite database, avatars, and attachments are persisted in the
-`nanorp-data` volume, mounted at `/data`.
+The SQLite database, avatars, attachments, and encryption key (`secret.key`)
+are persisted in the `nanorp-data` volume, mounted at `/data`. A complete backup
+must include all of them; the database alone is not enough to restore images or
+decrypt provider credentials. Stop the container before copying the data
+directory so the SQLite database and WAL are captured consistently.
 
 The container runs as a non-root user (uid `10001`). Named volumes work out of
 the box; if you bind-mount a host directory instead
@@ -102,25 +109,31 @@ its owner.
 **Models**
 - [Ollama](https://ollama.com) and any OpenAI-compatible endpoint
 - Configure several providers and switch model mid-conversation
-- API keys are encrypted at rest (ChaCha20-Poly1305)
+- Manual model IDs for compatible endpoints without model discovery
+- API keys are encrypted at rest (ChaCha20-Poly1305) and are not returned to the browser
 - Sampling controls: temperature, top-p, max tokens
 
 **Chat**
-- Token-by-token streaming, with stop-and-cancel that reaches the provider
+- Token-by-token streaming, including cancellation during provider connection
+- Clear stop/failure states, retry, and per-conversation draft preservation during navigation
+- Rename conversations and export them as Markdown or JSON
 - Collapsible reasoning ("thinking") blocks for reasoning models
 - Edit your messages — text *and* images — then regenerate from that point
 - Image attachments for vision models (up to 5 per message)
 - Markdown rendering, one-click copy
 
 **Interface**
-- Responsive down to phone widths, with a proper mobile layout
+- Status-aware first-run guidance and recent conversations on Home
+- Responsive down to phone widths, with keyboard/safe-area-aware mobile layouts
 - Light and dark themes, no flash on first paint
 - Keyboard navigable menus and dialogs, focus trapping, ARIA labels, and
   `prefers-reduced-motion` support
 
 **Yours**
-- No telemetry, no accounts, no cloud dependency
-- Every message, image, and key stays in a directory you control
+- No telemetry or accounts; local models need no cloud service
+- Messages, images, and encrypted keys are stored in a directory you control
+- Prompts and attached images are sent to the provider you choose for inference;
+  hosted providers therefore process the content sent to them
 
 ## Configuration
 

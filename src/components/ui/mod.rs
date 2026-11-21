@@ -5,6 +5,7 @@ pub mod confirm;
 pub mod dropdown_menu;
 pub mod field;
 pub mod modal;
+mod overlay;
 pub mod scroll_area;
 pub mod select;
 pub mod sheet;

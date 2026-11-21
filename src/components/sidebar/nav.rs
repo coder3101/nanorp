@@ -15,7 +15,7 @@ pub fn Nav(#[prop(optional)] on_navigate: Option<Callback<()>>) -> impl IntoView
 
     let item_class = move |target: &'static str| {
         let pathname = location.pathname.get();
-        let base = "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium \
+        let base = "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium \
                     transition-colors hover:bg-accent hover:text-accent-foreground";
         if pathname.starts_with(target) {
             format!("{} bg-accent text-accent-foreground", base)
